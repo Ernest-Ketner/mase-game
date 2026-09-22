@@ -41,6 +41,7 @@ import {
   ammoDropAmount,
   ammoDropChance,
   offerTitle,
+  offerDesc,
   listTaken,
   listBuildLines,
 } from "./upgrades.js";
@@ -566,7 +567,7 @@ function showUpgradeSelect(offers, mode = "bank") {
       if (up.rarity === "ink") card.classList.add("is-ink");
       card.querySelector(".upgrade-key").textContent = String(i + 1);
       card.querySelector(".upgrade-title").textContent = offerTitle(up, run);
-      card.querySelector(".upgrade-desc").textContent = up.desc;
+      card.querySelector(".upgrade-desc").textContent = offerDesc(up, run);
     }
   }
 }
@@ -884,7 +885,7 @@ function restartFromFirst() {
   mode = "play";
   levelNum = 1;
   run = createRunState();
-  applyWeaponSwap(run, starterWeaponId(runSeed));
+  applyWeaponSwap(run, starterWeaponId(runSeed), true);
   notebookFlash = 0;
   const begin = () => {
     loadSheet(false);
@@ -977,7 +978,7 @@ function showSheetEvent(ev) {
       card.classList.remove("hidden");
       card.querySelector(".upgrade-key").textContent = String(i + 1);
       card.querySelector(".upgrade-title").textContent = up.title;
-      card.querySelector(".upgrade-desc").textContent = up.desc;
+      card.querySelector(".upgrade-desc").textContent = offerDesc(up, run);
     }
   }
 }

@@ -251,8 +251,9 @@ const EVENTS = [
         label: "Макнуть луч",
         hint: "Много чернил.",
         apply: (ctx) => {
-          const gift = tryUpgrade(ctx.run, ctx.player, "laser_spd", ctx.rng);
-          return gift ? `луч впитал чернила: ${gift}` : "чернила только пачкают";
+          if (applyUpgrade(ctx.run, "laser_spd", ctx.player)) return "луч впитал чернила и летит быстрее";
+          const gift = giveRandomUpgrade(ctx.run, ctx.player, ctx.rng);
+          return gift ? `чернила дали другое: ${gift}` : "чернила только пачкают";
         },
       },
     ],

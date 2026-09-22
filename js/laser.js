@@ -193,7 +193,7 @@ export function tryFirePlayer(weapon, origin, dir, run, wpn, extras = {}) {
     if (!Number.isFinite(run.ammo) || run.ammo <= 0) return null;
   }
 
-  const burst = run.mods.smgBurst && run.weaponId === "wpn_smg";
+  const burst = run.mods.smgBurst && run.weaponId === "wpn_smg" && run.ammo >= 2;
   if (usesAmmo) {
     run.ammo -= burst && run.ammo >= 2 ? 2 : 1;
   }

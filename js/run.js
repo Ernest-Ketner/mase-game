@@ -12,6 +12,7 @@ export function createRunState() {
   return {
     taken: new Set(),
     weaponId: "wpn_laser",
+    starterWeaponId: "wpn_laser",
     ammo: Infinity,
     ammoMax: Infinity,
     firstShotPending: false,
@@ -148,7 +149,9 @@ export function weaponDef(weaponId) {
   }
 }
 
-export function applyWeaponSwap(run, weaponId) {
+export function applyWeaponSwap(run, weaponId, asStarter = false) {
+  if (asStarter) run.starterWeaponId = weaponId;
+  else if (!run.starterWeaponId) run.starterWeaponId = weaponId;
   const prevUses = usesAmmo(run);
   run.weaponId = weaponId;
   const stats = weaponDef(weaponId);

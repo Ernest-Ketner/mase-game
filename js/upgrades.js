@@ -2,26 +2,26 @@ import { applyWeaponSwap, usesAmmo, weaponDef, createRunState, applyPlayerStats 
 
 export const UPGRADE_CATALOG = [
   { id: "laser_spd", title: "Быстрый луч", desc: "Скорость снаряда +25%", maxStacks: 4, rarity: "common", syn: "laser", effect: { mul: { laserSpeedMult: 1.25 } } },
-  { id: "wpn_smg", title: "Автомат", desc: "Без рикошета, быстрее и скорострельнее, патроны ограничены", rarity: "rare", weapon: "wpn_smg", special: "weapon" },
-  { id: "wpn_pierce", title: "Пробивной луч", desc: "Пробивает 1 цель, чуть быстрее перезарядка", rarity: "rare", weapon: "wpn_pierce", special: "weapon" },
-  { id: "wpn_shotgun", title: "Дробь", desc: "3 коротких луча веером, без рикошета, патроны", rarity: "rare", weapon: "wpn_shotgun", special: "weapon" },
-  { id: "wpn_laser", title: "Карандаш", desc: "Вернуться к стартовому лазеру без лимита патронов", rarity: "common", weapon: "wpn_laser", special: "weapon" },
+  { id: "wpn_smg", title: "Автомат", desc: "Сменить ствол на автомат", rarity: "rare", weapon: "wpn_smg", special: "weapon" },
+  { id: "wpn_pierce", title: "Пробивной луч", desc: "Сменить ствол на пробивной", rarity: "rare", weapon: "wpn_pierce", special: "weapon" },
+  { id: "wpn_shotgun", title: "Дробь", desc: "Сменить ствол на дробь", rarity: "rare", weapon: "wpn_shotgun", special: "weapon" },
+  { id: "wpn_laser", title: "Карандаш", desc: "Сменить ствол на лазер без лимита патронов", rarity: "common", weapon: "wpn_laser", special: "weapon" },
   { id: "cd", title: "Скорострельность", desc: "Кулдаун −15%", maxStacks: 3, rarity: "common", syn: "any", effect: { mul: { cooldownMult: 0.85 } } },
-  { id: "bounce_plus", title: "Лишний отскок", desc: "+1 рикошет (для оружия с отскоками)", maxStacks: 3, rarity: "common", syn: "bounce", effect: { add: { bounceBonus: 1 } } },
-  { id: "bounce_zero_dmg", title: "Прямой удар", desc: "Без рикошета, но 2 урона по врагу", rarity: "rare", syn: "laser", special: "no_bounce" },
+  { id: "bounce_plus", title: "Лишний отскок", desc: "+1 рикошет", maxStacks: 3, rarity: "common", syn: "bounce", effect: { add: { bounceBonus: 1 } } },
+  { id: "bounce_zero_dmg", title: "Прямой удар", desc: "Без рикошета. Урон не ниже 2", rarity: "rare", syn: "laser", special: "no_bounce" },
   { id: "dmg", title: "Тяжёлый удар", desc: "+1 урон всем своим лучам", maxStacks: 2, rarity: "rare", syn: "any", effect: { add: { damage: 1 } } },
   { id: "move", title: "Лёгкий шаг", desc: "Скорость ходьбы +12%", maxStacks: 3, rarity: "common", syn: "any", effect: { mul: { moveMult: 1.12 } } },
   { id: "run_acc", title: "Стрельба на бегу", desc: "Меньше разброс, пока бежишь", maxStacks: 2, rarity: "common", syn: "any", special: "run_acc" },
   { id: "aim_preview", title: "Прицел", desc: "Пунктир всегда показывает траекторию луча", rarity: "common", syn: "any", effect: { set: { aimPreview: true } } },
   { id: "hp_max", title: "Запас сил", desc: "Макс. жизни +1 и сразу +1 HP", maxStacks: 3, rarity: "rare", syn: "any", special: "hp_max" },
   { id: "life_steal", title: "Жажда", desc: "25% шанс восстановить 1 HP при убийстве", rarity: "ink", syn: "any", effect: { set: { lifeSteal: 0.25 } } },
-  { id: "ammo_cap", title: "Большой магазин", desc: "Ёмкость патронов +50%", maxStacks: 2, rarity: "common", syn: "ammo", special: "ammo_cap" },
+  { id: "ammo_cap", title: "Большой магазин", desc: "Ёмкость патронов +50% и немного патронов сразу", maxStacks: 2, rarity: "common", syn: "ammo", special: "ammo_cap" },
   { id: "ammo_drop", title: "Запасливость", desc: "Патроны выпадают чаще и пачками больше", maxStacks: 2, rarity: "common", syn: "ammo", effect: { add: { ammoDropBonus: 0.2 } } },
   { id: "vision_nerf", title: "Тень", desc: "Дальность зрения врагов −18%", maxStacks: 2, rarity: "common", syn: "any", effect: { mul: { visionMult: 0.82 } } },
   { id: "shield_once", title: "Щит уровня", desc: "1 блок урона на каждом листе", rarity: "rare", syn: "any", special: "shield" },
   { id: "double_tap", title: "Двойной выстрел", desc: "Шанс сразу выпустить второй снаряд", maxStacks: 2, rarity: "rare", syn: "any", special: "double_tap" },
   { id: "slow_shots", title: "Тяжёлый воздух", desc: "Снаряды врагов −18% скорости", maxStacks: 2, rarity: "common", syn: "any", effect: { mul: { enemyShotMult: 0.82 } } },
-  { id: "exit_early", title: "Ранний выход", desc: "Выход открывается с 3 мишеней", rarity: "rare", syn: "any", effect: { set: { exitEarly: true } } },
+  { id: "exit_early", title: "Ранний выход", desc: "Если цель — метки, выход с 3 вместо 4", rarity: "rare", syn: "any", effect: { set: { exitEarly: true } } },
   { id: "armor", title: "Броня", desc: "Неуязвимость после урона 1.6 с", rarity: "rare", syn: "any", effect: { set: { invulnTime: 1.6 } } },
   { id: "lucky", title: "Удача", desc: "Жизни дропаются чаще; патроны тоже", rarity: "ink", syn: "any", special: "lucky" },
   { id: "crit", title: "Метка", desc: "Шанс нанести +1 урон", maxStacks: 2, rarity: "rare", syn: "any", special: "crit" },
@@ -33,7 +33,7 @@ export const UPGRADE_CATALOG = [
   { id: "spawn_wound", title: "Жгучий портал", desc: "Враги выходят уже ранеными (−1 HP)", rarity: "ink", syn: "any", effect: { set: { spawnWound: 1 } } },
   { id: "reload_mark", title: "Сбор зарядки", desc: "Мишень сбрасывает половину перезарядки", rarity: "common", syn: "any", effect: { set: { reloadOnTarget: true } } },
   { id: "level_heal", title: "Передышка", desc: "В начале каждого следующего листа +1 HP", rarity: "rare", syn: "any", effect: { set: { levelHeal: true } } },
-  { id: "pierce_plus", title: "Сквозняк", desc: "+1 пробитие всем лучам", maxStacks: 2, rarity: "rare", syn: "pierce", effect: { add: { pierceBonus: 1 } } },
+  { id: "pierce_plus", title: "Пробивной заряд", desc: "Выстрелы пробивают ещё одну цель. Ствол тот же", maxStacks: 2, rarity: "rare", syn: "any", effect: { add: { pierceBonus: 1 } } },
   { id: "fat_beam", title: "Толстый луч", desc: "Свой снаряд шире, проще попасть", maxStacks: 2, rarity: "common", syn: "any", effect: { mul: { shotRadiusMult: 1.4 } } },
   { id: "stun_hit", title: "Оглушение", desc: "Попадание держит врага ещё +0.3 с", maxStacks: 3, rarity: "common", syn: "any", effect: { add: { stunBonus: 0.3 } } },
   { id: "first_shot", title: "Первый выстрел", desc: "Первый выстрел на листе без перезарядки и +1 урон", rarity: "rare", syn: "any", special: "first_shot" },
@@ -46,7 +46,7 @@ export const UPGRADE_CATALOG = [
   { id: "bounce_split", title: "Чернильный скол", desc: "Шанс второго короткого луча в точке рикошета", rarity: "ink", syn: "bounce", effect: { set: { bounceSplit: true } } },
   { id: "smg_burst", title: "Очередь", desc: "Автомат: 3 луча, расход 2 патрона", rarity: "ink", syn: "smg", effect: { set: { smgBurst: true } } },
   { id: "ink_pool", title: "Лужа", desc: "Дробь оставляет лужу на 2 с — враги в ней медленнее", rarity: "ink", syn: "shotgun", effect: { set: { inkPool: true } } },
-  { id: "fog_cut", title: "Прорезь", desc: "Пробивной луч открывает туман вдоль пути на 1.5 с", rarity: "ink", syn: "pierce", effect: { set: { fogCut: true } } },
+  { id: "fog_cut", title: "Прорезь", desc: "Пробивной открывает туман вдоль пути на 1.5 с", rarity: "ink", syn: "pierce", effect: { set: { fogCut: true } } },
   { id: "last_clip", title: "Последний ряд", desc: "При патронах ≤ 25% урон +1", rarity: "rare", syn: "ammo", effect: { set: { lastClip: true } } },
 ];
 
@@ -89,6 +89,11 @@ function weaponSyn(run) {
   return ["laser", "bounce", "any"];
 }
 
+function weaponBounces(run) {
+  if (run.mods.forceNoBounce) return false;
+  return (weaponDef(run.weaponId).bounces || 0) > 0;
+}
+
 export function isAvailable(run, upgrade) {
   const max = upgrade.maxStacks || 1;
   if (stackCount(run, upgrade.id) >= max) return false;
@@ -96,20 +101,16 @@ export function isAvailable(run, upgrade) {
   for (const req of upgrade.requires || []) {
     if (!run.taken.has(req) && stackCount(run, req) < 1) return false;
   }
-  if (upgrade.weapon && run.weaponId === upgrade.weapon) return false;
-  if (upgrade.weapon === "wpn_laser" && run.weaponId === "wpn_laser") return false;
-  const bounceIds = new Set(["bounce_plus", "bounce_hurt", "bounce_seek", "bounce_split"]);
+  if (upgrade.weapon || upgrade.special === "weapon") return false;
+  const bounceIds = new Set(["bounce_plus", "bounce_hurt", "bounce_seek", "bounce_split", "bounce_zero_dmg"]);
   if (bounceIds.has(upgrade.id) || upgrade.syn === "bounce") {
-    if (run.mods.forceNoBounce) return false;
-    if (run.weaponId === "wpn_smg" || run.weaponId === "wpn_shotgun") return false;
+    if (!weaponBounces(run)) return false;
   }
   if (upgrade.syn === "ammo" && !usesAmmo(run)) return false;
   if (upgrade.syn === "smg" && run.weaponId !== "wpn_smg") return false;
   if (upgrade.syn === "shotgun" && run.weaponId !== "wpn_shotgun") return false;
   if (upgrade.syn === "pierce" && run.weaponId !== "wpn_pierce") return false;
-  if (upgrade.syn === "laser" && run.weaponId !== "wpn_laser" && run.weaponId !== "wpn_pierce") {
-    if (upgrade.id === "laser_spd" && run.weaponId !== "wpn_laser") return false;
-  }
+  if (upgrade.syn === "laser" && run.weaponId !== "wpn_laser" && run.weaponId !== "wpn_pierce") return false;
   return true;
 }
 
@@ -191,7 +192,6 @@ function applySpecial(run, player, special, stackIndex) {
   const m = run.mods;
   switch (special) {
     case "weapon":
-      applyWeaponSwap(run, run._pendingWeapon);
       break;
     case "no_bounce":
       m.forceNoBounce = true;
@@ -238,6 +238,28 @@ function applySpecial(run, player, special, stackIndex) {
   }
 }
 
+export function offerDesc(upgrade, run) {
+  if (!upgrade) return "";
+  if (upgrade.id === "lucky") {
+    return usesAmmo(run) ? "Жизни и патроны дропаются чаще" : "Жизни дропаются чаще";
+  }
+  if (upgrade.id === "double_tap") {
+    const chance = stackCount(run, upgrade.id) === 0 ? 30 : 50;
+    const extra = usesAmmo(run) ? ", тратит патрон" : "";
+    return `Шанс ${chance}% сразу выпустить второй снаряд${extra}`;
+  }
+  if (upgrade.id === "crit") {
+    const chance = stackCount(run, upgrade.id) === 0 ? 20 : 35;
+    return `Шанс ${chance}% нанести +1 урон`;
+  }
+  if (upgrade.id === "wpn_laser") {
+    const starter = run?.starterWeaponId || run?.weaponId;
+    if (starter === "wpn_laser") return "Вернуться к своему лазеру без лимита патронов";
+    return "Сменить ствол на лазер без лимита патронов";
+  }
+  return upgrade.desc || "";
+}
+
 export function offerTitle(upgrade, run) {
   const max = upgrade.maxStacks || 1;
   if (max <= 1) return upgrade.title;
@@ -267,7 +289,7 @@ export function listBuildLines(run) {
   for (const upgrade of UPGRADE_CATALOG) {
     const title = takenLabel(upgrade, run);
     if (!title) continue;
-    lines.push({ text: `${title} — ${upgrade.desc}`, lost: false });
+    lines.push({ text: `${title} — ${offerDesc(upgrade, run)}`, lost: false });
   }
   for (const upgrade of UPGRADE_CATALOG) {
     if (stackCount(run, upgrade.id) > 0) continue;
@@ -275,7 +297,7 @@ export function listBuildLines(run) {
     if (count <= 0) continue;
     const max = upgrade.maxStacks || 1;
     const title = max > 1 ? `${upgrade.title} (${count}/${max})` : upgrade.title;
-    lines.push({ text: `${title} — ${upgrade.desc}`, lost: true });
+    lines.push({ text: `${title} — ${offerDesc(upgrade, run)}`, lost: true });
   }
   return lines;
 }
@@ -293,10 +315,8 @@ function forceApplyUpgrade(run, upgrade, player = null) {
   const stackIndex = stackCount(run, upgrade.id);
   run.stacks[upgrade.id] = stackIndex + 1;
   if (run.stacks[upgrade.id] >= (upgrade.maxStacks || 1)) run.taken.add(upgrade.id);
-  if (upgrade.weapon) run._pendingWeapon = upgrade.weapon;
   applyEffectBlob(run.mods, upgrade.effect, stackIndex);
   if (upgrade.special) applySpecial(run, player, upgrade.special, stackIndex);
-  run._pendingWeapon = null;
 }
 
 export function takenEntries(run) {
@@ -306,6 +326,7 @@ export function takenEntries(run) {
 export function rebuildFromStacks(run, player = null) {
   const saved = { ...(run.stacks || {}) };
   const ammo = run.ammo;
+  const starter = run.starterWeaponId || run.weaponId || "wpn_laser";
   const keep = {
     targetBank: run.targetBank,
     heat: run.heat,
@@ -327,7 +348,9 @@ export function rebuildFromStacks(run, player = null) {
   run.heat = keep.heat;
   run.pendingHeat = keep.pendingHeat;
   run.pendingEvent = keep.pendingEvent;
+  applyWeaponSwap(run, starter, true);
   for (const u of UPGRADE_CATALOG) {
+    if (u.weapon) continue;
     const n = saved[u.id] || 0;
     for (let i = 0; i < n; i++) forceApplyUpgrade(run, u, null);
   }
