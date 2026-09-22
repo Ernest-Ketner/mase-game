@@ -622,9 +622,11 @@ body.in-menu .desk {
 
 .win.is-defeat {
   overflow: hidden;
+  justify-content: flex-start;
+  padding: 8px 12px 10px;
+  gap: 4px;
   background:
     radial-gradient(ellipse at 50% 42%, rgba(244, 236, 214, 0.88) 0 34%, rgba(120, 28, 34, 0.58) 100%);
-  gap: 10px;
 }
 
 .win.is-defeat::before {
@@ -642,7 +644,8 @@ body.in-menu .desk {
 
 .win.is-defeat .win-title {
   color: #9a1c24;
-  font-size: 46px;
+  font-size: 32px;
+  margin-top: 2px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   text-shadow: 1px 1px 0 rgba(255, 244, 232, 0.7);
@@ -651,19 +654,48 @@ body.in-menu .desk {
 
 .win.is-defeat .win-sub {
   color: #5c2a30;
+  font-size: 15px;
   font-weight: 600;
 }
 
 .death-build {
-  font-size: 16px;
+  font-size: clamp(11px, calc(30vh / var(--build-rows, 8)), 15px);
   color: #5c2a30;
   text-align: left;
-  white-space: pre-line;
-  max-height: 28vh;
-  overflow: auto;
-  width: min(360px, 88%);
-  margin: 4px 0 8px;
-  line-height: 1.35;
+  width: 100%;
+  margin: 0 0 6px;
+  line-height: 1.15;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 12px;
+  row-gap: 1px;
+  align-content: start;
+  overflow: visible;
+}
+
+.win.is-defeat #death-panel {
+  width: min(96%, 640px);
+  margin-top: 2px;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-height: 0;
+  justify-content: flex-start;
+}
+
+.death-build .build-head,
+.death-build .build-tail {
+  grid-column: 1 / -1;
+}
+
+.death-build .build-name {
+  font-weight: 700;
+}
+
+.death-build .build-line:not(.build-head):not(.build-tail) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 .win.is-defeat .death-build {
@@ -711,6 +743,8 @@ body.in-menu .desk {
 }
 
 .win.is-defeat .menu-btn {
+  padding: 7px 10px;
+  font-size: 16px;
   border-color: #8b151c;
   color: #6d1218;
   background: rgba(255, 244, 236, 0.94);

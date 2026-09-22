@@ -8,6 +8,7 @@ import {
   bfsDistances,
   gridLos,
   isFloor,
+  clearShotOrigin,
 } from "./maze.js";
 import { remainingPath, aimJitter, enemyFireSpread } from "./laser.js";
 
@@ -458,15 +459,53 @@ function clearStep(enemy) {
   enemy.stepT = 0;
 }
 
-function fireAt(enemy, player) {
+function standoffRange(enemy) {
+  if (enemy.kind === "gunner") return { min: CELL * 1.7, max: CELL * 3.3 };
+  if (enemy.kind === "runner") return { min: CELL * 1.15, max: CELL * 1.9 };
+  return { min: CELL * 1.35, max: CELL * 2.35 };
+}
+
+function stepAwayFrom(grid, enemy, player) {
+  const here = worldToCell(enemy.x, enemy.y);
+  const options = openNeighbors(grid, here.c, here.r);
+  if (options.length === 0) return null;
+  const pc = worldToCell(player.x, player.y);
+  const hereD = Math.abs(here.c - pc.c) + Math.abs(here.r - pc.r);
+  let best = null;
+  let bestD = hereD;
+  for (const cell of options) {
+    const d = Math.abs(cell.c - pc.c) + Math.abs(cell.r - pc.r);
+    if (d > bestD) {
+      bestD = d;
+      best = cell;
+    }
+  }
+  return best;
+}
+
+function facePlayer(enemy, player) {
+  enemy.moving = false;
+  enemy.angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+}
+
+function muzzleOf(enemy, reach, grid) {
+  const rawX = enemy.x + Math.cos(enemy.angle) * reach;
+  const rawY = enemy.y + Math.sin(enemy.angle) * reach;
+  return clearShotOrigin(enemy.x, enemy.y, rawX, rawY, grid);
+}
+
+function fireAt(enemy, player, grid) {
   const aimX = player.x - enemy.x;
   const aimY = player.y - enemy.y;
-  if (Math.hypot(aimX, aimY) < CELL * 0.6) return null;
+  const dist = Math.hypot(aimX, aimY);
+  if (dist < 6) return null;
   enemy.angle = Math.atan2(aimY, aimX);
   const shotAngle = aimJitter(enemy.angle, enemyFireSpread(!!enemy.moving, enemy.kind));
+  const reach = Math.min(12, Math.max(4, dist * 0.42));
+  const origin = muzzleOf(enemy, reach, grid);
   return {
-    x: enemy.x + Math.cos(enemy.angle) * 12,
-    y: enemy.y + Math.sin(enemy.angle) * 12,
+    x: origin.x,
+    y: origin.y,
     dx: Math.cos(shotAngle),
     dy: Math.sin(shotAngle),
   };
@@ -586,11 +625,25 @@ function shoutToNeighbors(enemies, grid, source, player) {
 
 function planNextStep(enemy, grid, player, pack = []) {
   if (enemy.alert && enemy.mode === "chase") {
+    const dist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+    const sees = canSeePlayer(enemy, player, grid);
+    const range = standoffRange(enemy);
+    if (sees && dist < range.min) {
+      const away = stepAwayFrom(grid, enemy, player);
+      if (away) beginStep(enemy, away);
+      else facePlayer(enemy, player);
+      return;
+    }
+    if (sees && dist <= range.max && enemy.tactic !== "regroup") {
+      facePlayer(enemy, player);
+      return;
+    }
     const targetCell = worldToCell(player.x, player.y);
     const here = worldToCell(enemy.x, enemy.y);
     if (here.c === targetCell.c && here.r === targetCell.r) {
-      enemy.moving = false;
-      enemy.angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+      const away = stepAwayFrom(grid, enemy, player);
+      if (away) beginStep(enemy, away);
+      else facePlayer(enemy, player);
       return;
     }
     const step = chooseChaseStep(grid, enemy, player, pack);
@@ -714,15 +767,14 @@ function updateMovement(enemy, grid, walls, player, shots, zones, dt, opts = {})
   planNextStep(enemy, grid, player, pack);
 }
 
-function fireVolley(enemy, player, fired, count) {
+function fireVolley(enemy, player, fired, count, grid) {
   const aimX = player.x - enemy.x;
   const aimY = player.y - enemy.y;
-  if (Math.hypot(aimX, aimY) < CELL * 0.6) return;
+  const dist = Math.hypot(aimX, aimY);
+  if (dist < 6) return;
   enemy.angle = Math.atan2(aimY, aimX);
-  const muzzle = {
-    x: enemy.x + Math.cos(enemy.angle) * 12,
-    y: enemy.y + Math.sin(enemy.angle) * 12,
-  };
+  const reach = Math.min(12, Math.max(4, dist * 0.42));
+  const muzzle = muzzleOf(enemy, reach, grid);
   const spread = 0.16;
   for (let i = 0; i < count; i++) {
     const t = count === 1 ? 0 : (i / (count - 1)) * 2 - 1;
@@ -737,7 +789,7 @@ function fireVolley(enemy, player, fired, count) {
   enemy.noiseTimer = 0.45;
 }
 
-function useChampionAbility(enemy, player, fired, dt) {
+function useChampionAbility(enemy, player, fired, dt, grid) {
   const list = enemy.abilities || [];
   if (list.length === 0) return;
   enemy.abilityTimer = (enemy.abilityTimer ?? 1.2) - dt;
@@ -746,7 +798,7 @@ function useChampionAbility(enemy, player, fired, dt) {
   enemy.abilityIndex = (enemy.abilityIndex + 1) % list.length;
   enemy.abilityTimer = 2.2 + Math.random() * 1.1;
   if (ab === "burst") {
-    fireVolley(enemy, player, fired, 3);
+    fireVolley(enemy, player, fired, 3, grid);
     enemy.shootCooldown = Math.max(enemy.shootCooldown, 0.9);
   } else if (ab === "shield") {
     enemy.shieldTimer = Math.max(enemy.shieldTimer || 0, 1.7);
@@ -780,7 +832,7 @@ function tryShootIfAlert(enemy, player, grid, dt, fired, opts = {}) {
     kind.visionMult *
     (huntMode ? VISION_HUNT_MULT : 1);
   if (!canSeePlayer(enemy, player, grid, vision)) return;
-  const shot = fireAt(enemy, player);
+  const shot = fireAt(enemy, player, grid);
   if (!shot) return;
   enemy.noiseTimer = 0.45;
   const huntCd = huntMode && !opts.huntCalm ? 0.85 : 1;
@@ -894,7 +946,7 @@ function updateWarden(enemy, grid, walls, player, shots, zones, dt, fired, opts)
   if (enemy.pendingCounter) {
     enemy.pendingCounter = false;
     if (enemy.alert) {
-      const shot = fireAt(enemy, player);
+      const shot = fireAt(enemy, player, grid);
       if (shot) {
         enemy.noiseTimer = 0.45;
         fired.push(shot);
@@ -928,7 +980,7 @@ function updateChampion(enemy, grid, walls, player, shots, zones, dt, fired, opt
     enemy.angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
     return;
   }
-  if (enemy.alert) useChampionAbility(enemy, player, fired, dt);
+  if (enemy.alert) useChampionAbility(enemy, player, fired, dt, grid);
   if (enemy.guarding) {
     enemy.moving = false;
     return;

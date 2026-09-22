@@ -14,6 +14,7 @@ import {
   pickSheetTag,
   SHEET_TAGS,
   exitKindAtPoint,
+  clearShotOrigin,
 } from "./maze.js";
 import { createPlayer, updatePlayer, muzzlePoint, hurtPlayer, healPlayer, grantInvuln } from "./player.js";
 import {
@@ -61,6 +62,7 @@ import {
   wavePhase,
 } from "./spawn.js";
 import { parseSeedFromUrl, randomSeed, sheetRng, starterWeaponId } from "./seed.js";
+import { killQuota, objectiveById, pickSheetObjective, surviveSeconds } from "./objectives.js";
 import { bindAudioUnlock, sfx, toggleMute, isMuted } from "./audio.js";
 import { createFx, resetFx, spawnBlot, spawnDamage, updateFx } from "./fx.js";
 import { pickSheetEvent } from "./events.js";
@@ -152,6 +154,8 @@ let overtimeWait = 0;
 let lastHurtCause = "laser";
 let muteHintLife = 0;
 let timeRng = Math.random;
+const hudPulse = { hp: 0, goal: 0, gun: 0, bank: 0, feature: 0 };
+let hudSnap = null;
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -359,7 +363,7 @@ function showMenu(screen = "root") {
   } else if (screen === "about") {
     showOverlay("Об игре", "");
     menuPageText.textContent =
-      `Собери ${EXIT_NEED} мишени из ${TARGET_COUNT} — откроются два шлюза снизу.\nЗелёный «тихо» — обычный следующий лист и происшествие с выбором. Красный «жар» — следующий лист сложнее; каждый красный подряд поднимает жар (враги крепче и чаще).\nМишени только подбирать: подойти вплотную, выстрелом не сбить.\nЛишние метки копятся: после листа 3 метки = выбор 1 из 2 апгрейдов, при банке 6 — 3 карточки.\nС ${Math.ceil(TARGET_COUNT * 0.75)} мишеней начинается охота.\nСтраж и чемпион — не с первого листа. Цель тетради — ${NOTEBOOK_GOAL} листов, можно идти дальше.\nИногда лист со сроком (с 2-го); после ${NOTEBOOK_GOAL} срок всегда и короче. Если время вышло — раз в несколько секунд 1 урон.\nАвтомат и дробь получают +${SHEET_AMMO_GRANT} патронов на каждом новом листе.\nСид забега: ${runSeed}`;
+      `Лист 1: собери ${EXIT_NEED} мишени из ${TARGET_COUNT} — откроются два шлюза снизу.\nСо 2-го листа цель другая и зависит от сида: все метки, просто проход, выжить, зачистка. С 3-го может выпасть босс — убить чемпиона.\nЗелёный «тихо» — обычный следующий лист и происшествие с выбором. Красный «жар» — следующий лист сложнее; каждый красный подряд поднимает жар (враги крепче и чаще).\nМишени только подбирать: подойти вплотную, выстрелом не сбить.\nЛишние метки копятся: после листа 3 метки = выбор 1 из 2 апгрейдов, при банке 6 — 3 карточки.\nС ${Math.ceil(TARGET_COUNT * 0.75)} мишеней начинается охота.\nСтраж и чемпион — не с первого листа. Цель тетради — ${NOTEBOOK_GOAL} листов, можно идти дальше.\nИногда лист со сроком (с 2-го); после ${NOTEBOOK_GOAL} срок всегда и короче. Если время вышло — раз в несколько секунд 1 урон.\nАвтомат и дробь получают +${SHEET_AMMO_GRANT} патронов на каждом новом листе.\nСид забега: ${runSeed}`;
   } else {
     showOverlay("Рекорд", "");
     const best = bestSheet();
@@ -445,9 +449,36 @@ function trySealEntry() {
   sealEntryGate(sheet);
 }
 
+function objectiveReady() {
+  const id = sheet?.objective || "marks";
+  if (id === "marks") return hitCount() >= exitNeed();
+  if (id === "all") return hitCount() >= (sheet.targets?.length || TARGET_COUNT);
+  if (id === "pass") return true;
+  if (id === "boss") return !!sheet.bossDown;
+  if (id === "survive") return (sheet.surviveLeft ?? 1) <= 0;
+  if (id === "kills") return (sheet.kills || 0) >= (sheet.killQuota || 1);
+  return hitCount() >= exitNeed();
+}
+
 function tryOpenExit() {
   if (!sheet || sheet.exitOpen) return;
-  if (hitCount() >= exitNeed()) openExitGate(sheet);
+  if (objectiveReady()) openExitGate(sheet);
+}
+
+function noteKill(enemy) {
+  sfx.kill();
+  const needAmmo = usesAmmo(run) && run.ammo <= 0;
+  maybeDropLoot(enemy.x, enemy.y, needAmmo);
+  if (sheet) {
+    sheet.kills = (sheet.kills || 0) + 1;
+    if (enemy.kind === "champion") {
+      sheet.bossDown = true;
+      pendingBounty += 1;
+      grantInvuln(player, 2);
+    }
+  }
+  tryOpenExit();
+  if (run.mods.lifeSteal > 0 && Math.random() < run.mods.lifeSteal) healPlayer(player);
 }
 
 function makeSheet() {
@@ -456,6 +487,13 @@ function makeSheet() {
   const timeLimit = sheetTimeLimit(levelNum, rng);
   const level = generateLevel(rng, { tag, seed: hashVisible(runSeed, levelNum) });
   level.timeLimit = level.tag === "a1" && timeLimit > 0 ? timeLimit * A1_SCALE : timeLimit;
+  const objective = pickSheetObjective(levelNum, runSeed);
+  level.objective = objective.id;
+  level.kills = 0;
+  level.killQuota = killQuota(levelNum);
+  level.bossDown = false;
+  level.surviveLeft = objective.id === "survive" ? surviveSeconds(level.timeLimit) : 0;
+  level.goalLife = 3.6;
   return level;
 }
 
@@ -511,6 +549,8 @@ function loadSheet(keepPlayer = false) {
   beginSheetSpawns(spawner, world());
   snapCamera(camera, player.x, player.y);
   rememberBest();
+  tryOpenExit();
+  resetHudPulse();
   updateHud();
 }
 
@@ -544,7 +584,7 @@ function beginUpgradePick() {
     afterShop();
     return;
   }
-  const offers = pickOffers(run, shopCount());
+  const offers = pickOffers(run, shopCount(), Math.random, { lowLife: player?.hp === 1 });
   if (offers.length === 0) {
     afterShop();
     return;
@@ -687,12 +727,37 @@ function skipShop() {
   afterShop();
 }
 
-function gunLabel() {
+function weaponHud() {
   const wpn = getWeapon(run);
-  if (run.weaponId === "wpn_laser" && weapon?.overheated) return "Лазер перегрев";
-  let gunText = weapon.cooldown > 0 ? `${wpn.label} ${weapon.cooldown.toFixed(1)}с` : `${wpn.label} готов`;
-  if (usesAmmo(run)) gunText += ` · ${run.ammo}/${run.ammoMax}`;
-  return gunText;
+  const name = wpn?.label || "Оружие";
+  if (run.weaponId === "wpn_laser" && weapon?.overheated) {
+    return { name, state: "перегрев", hot: true };
+  }
+  if (usesAmmo(run)) {
+    return { name, state: `${run.ammo} патр.`, hot: run.ammo <= 0 };
+  }
+  if (weapon?.cooldown > 0.05) return { name, state: `${weapon.cooldown.toFixed(1)} с`, hot: false };
+  return { name, state: "готов", hot: false };
+}
+
+function goalHud() {
+  const id = sheet?.objective || "marks";
+  const def = objectiveById(id);
+  const hit = hitCount();
+  const total = sheet?.targets?.length || TARGET_COUNT;
+  let progress = "";
+  if (id === "marks") progress = `${hit} из ${exitNeed()}`;
+  else if (id === "all") progress = `${hit} из ${total}`;
+  else if (id === "pass") progress = "к нижним шлюзам";
+  else if (id === "boss") progress = sheet?.bossDown ? "убит" : "найди чемпиона";
+  else if (id === "survive") progress = formatClock(sheet?.surviveLeft || 0);
+  else if (id === "kills") progress = `${sheet?.kills || 0} из ${sheet?.killQuota || 0}`;
+  return {
+    title: def.label,
+    progress,
+    hint: def.hint,
+    life: sheet?.goalLife || 0,
+  };
 }
 
 function hudState() {
@@ -706,39 +771,89 @@ function hudState() {
       maxHp: 0,
     };
   }
-  const hit = hitCount();
-  const total = sheet?.targets?.length || TARGET_COUNT;
+  const gun = weaponHud();
+  const goal = goalHud();
   return {
     hp: player?.hp ?? 0,
     maxHp: player?.maxHp ?? 3,
-    gun: gunLabel(),
+    weaponName: gun.name,
+    weaponState: gun.state,
+    weaponHot: gun.hot,
     laserHeat: run.weaponId === "wpn_laser" ? weapon?.heat || 0 : null,
     laserHot: run.weaponId === "wpn_laser" && !!weapon?.overheated,
-    marks: `метки ${hit}/${total}`,
-    bank: `банк ${run.targetBank}`,
-    tag: sheetTagLine(),
+    goalTitle: goal.title,
+    goalProgress: goal.progress,
+    goalHint: goal.hint,
+    goalLife: goal.life,
+    bank: run.targetBank,
+    feature: featureLine(),
     hunt: isHuntMode(),
     exitOpen: !!sheet?.exitOpen && !isHuntMode() && !overtime,
     hint: muteHintLife > 0 ? (isMuted() ? "звук выкл" : "звук вкл") : kindHintText,
     hintLife: muteHintLife > 0 ? muteHintLife : kindHintLife,
     notebook: notebookFlash,
-    clock: sheetTimed ? (overtime ? "0:00" : formatClock(sheetTimer)) : "",
+    clock: sheetTimed ? (overtime ? "срок 0:00" : `срок ${formatClock(sheetTimer)}`) : "",
     overtime,
     heat: run.heat || 0,
+    pulse: { ...hudPulse },
+    lowLife: (player?.hp ?? 0) === 1,
   };
 }
 
-function sheetTagLine() {
+function goalPulseKey() {
+  const id = sheet?.objective || "marks";
+  if (id === "survive") {
+    const left = sheet?.surviveLeft || 0;
+    if (left <= 0) return "done";
+    if (left <= 5) return "low";
+    return "run";
+  }
+  return goalHud().progress;
+}
+
+function resetHudPulse() {
+  hudSnap = null;
+  hudPulse.hp = 0;
+  hudPulse.goal = 0;
+  hudPulse.gun = 0;
+  hudPulse.bank = 0;
+  hudPulse.feature = 0;
+}
+
+function tickHudPulse(dt) {
+  for (const key of Object.keys(hudPulse)) hudPulse[key] = Math.max(0, hudPulse[key] - dt);
+  if (mode !== "play" || !player || !sheet) return;
+  const gun = weaponHud();
+  const snap = {
+    hp: player.hp,
+    goal: goalPulseKey(),
+    gun: `${run.weaponId}|${gun.hot}|${usesAmmo(run) ? run.ammo : gun.state === "готов" ? "ready" : "cd"}`,
+    bank: run.targetBank,
+    feature: featureLine(),
+  };
+  if (hudSnap) {
+    if (snap.hp !== hudSnap.hp) hudPulse.hp = snap.hp < hudSnap.hp ? 0.7 : 0.45;
+    if (snap.goal !== hudSnap.goal) hudPulse.goal = 0.6;
+    if (snap.gun !== hudSnap.gun) hudPulse.gun = 0.5;
+    if (snap.bank !== hudSnap.bank) hudPulse.bank = 0.45;
+    if (snap.feature !== hudSnap.feature) hudPulse.feature = 0.5;
+  }
+  hudSnap = snap;
+}
+
+function featureLine() {
   const bits = [];
   if (sheet?.tagLabel) bits.push(sheet.tagLabel);
+  else bits.push("обычный лист");
   if (run.heat) bits.push(run.heat > 1 ? `жар ${run.heat}` : "жар");
-  if (sheetTimed) bits.push("срок");
   if (levelNum > NOTEBOOK_GOAL) bits.push("дальше тетради");
   return bits.join(" · ");
 }
 
 function pauseSheetText() {
   const lines = [];
+  const goal = goalHud();
+  lines.push(`цель: ${goal.title} — ${goal.hint} (${goal.progress})`);
   const tag = SHEET_TAGS.find((t) => t.id === sheet?.tag);
   if (tag) lines.push(`${tag.label} — ${tag.hint}`);
   else lines.push("обычный лист — без особой нарезки");
@@ -763,19 +878,43 @@ function pauseSheetText() {
   return lines;
 }
 
+function fitDeathBuild() {
+  if (!deathBuild || !overlayEl) return;
+  let size = 15;
+  deathBuild.style.fontSize = `${size}px`;
+  while (size > 9 && overlayEl.scrollHeight > overlayEl.clientHeight + 2) {
+    size -= 1;
+    deathBuild.style.fontSize = `${size}px`;
+  }
+}
+
 function fillBuildBlock(el, headLines, buildLines, emptyText, tailLines = []) {
   if (!el) return;
   el.replaceChildren();
-  const add = (text, lost = false) => {
+  const rows =
+    Math.ceil(Math.max(buildLines.length, 1) / 2) * 2 + headLines.length + tailLines.length;
+  el.style.setProperty("--build-rows", String(Math.max(rows, 1)));
+  const add = (text, lost = false, role = "") => {
     const line = document.createElement("span");
-    line.className = lost ? "build-line build-lost" : "build-line";
-    line.textContent = text;
+    line.className = ["build-line", lost ? "build-lost" : "", role].filter(Boolean).join(" ");
+    const parts = role ? null : text.split(" — ");
+    if (parts && parts.length > 1) {
+      const name = document.createElement("span");
+      name.className = "build-name";
+      name.textContent = parts[0];
+      const desc = document.createElement("span");
+      desc.className = "build-desc";
+      desc.textContent = ` — ${parts.slice(1).join(" — ")}`;
+      line.append(name, desc);
+    } else {
+      line.textContent = text;
+    }
     el.append(line);
   };
-  for (const text of headLines) add(text);
-  if (buildLines.length === 0) add(emptyText);
+  for (const text of headLines) add(text, false, "build-head");
+  if (buildLines.length === 0) add(emptyText, false, "build-head");
   else for (const row of buildLines) add(row.text, row.lost);
-  for (const text of tailLines) add(text);
+  for (const text of tailLines) add(text, false, "build-tail");
 }
 
 function updateHud() {
@@ -799,7 +938,7 @@ function updateHud() {
     return;
   }
   const h = hudState();
-  setStatus(`${h.marks} · ${h.bank} · ${h.gun} · лист ${levelNum}`);
+  setStatus(`цель ${h.goalTitle}: ${h.goalProgress} · ${h.feature} · ${h.weaponName} ${h.weaponState} · жизни ${h.hp}/${h.maxHp} · лист ${levelNum}`);
 }
 
 function maybeDropLoot(x, y, forceAmmo = false) {
@@ -873,7 +1012,7 @@ function collectTargets() {
 function tryShowBounty() {
   if (pendingBounty <= 0 || upgradeOffers || lost || paused || mode !== "play") return;
   pendingBounty -= 1;
-  const offers = pickOffers(run, 2);
+  const offers = pickOffers(run, 2, Math.random, { lowLife: player?.hp === 1 });
   if (offers.length === 0) return;
   showUpgradeSelect(offers, "bounty");
 }
@@ -906,13 +1045,22 @@ function tryLose() {
   showOverlay("Поражение", `${cause} · лист ${levelNum} · рекорд ${bestSheet()}`);
   if (deathBuild) fillBuildBlock(
     deathBuild,
-    [`оружие: ${getWeapon(run).label}`],
+    [`цель: ${goalHud().title}`, `оружие: ${getWeapon(run).label}`],
     listBuildLines(run),
     "без апгрейдов",
     [`лист ${levelNum} · сид ${runSeed}`],
   );
   if (deathPanel) deathPanel.classList.remove("hidden");
+  fitDeathBuild();
   updateHud();
+}
+
+function tickObjective(dt) {
+  if (!sheet || lost) return;
+  if (sheet.goalLife > 0) sheet.goalLife = Math.max(0, sheet.goalLife - dt);
+  if (sheet.objective !== "survive" || sheet.exitOpen) return;
+  sheet.surviveLeft = Math.max(0, (sheet.surviveLeft || 0) - dt);
+  if (sheet.surviveLeft <= 0) tryOpenExit();
 }
 
 function tickDeadline(dt) {
@@ -938,9 +1086,15 @@ function tickDeadline(dt) {
   tryLose();
 }
 
+function shotOrigin() {
+  const raw = muzzlePoint(player);
+  return clearShotOrigin(player.x, player.y, raw.x, raw.y, sheet?.grid);
+}
+
 function shoot() {
   if (mode !== "play" || lost || paused || upgradeOffers) return;
-  const origin = muzzlePoint(player);
+  const origin = shotOrigin();
+  player.muzzle = origin;
   const dir = {
     x: Math.cos(player.angle),
     y: Math.sin(player.angle),
@@ -960,7 +1114,7 @@ function aimPreview() {
   if (mode !== "play" || !run.mods.aimPreview || lost || paused || upgradeOffers || !sheet) {
     return null;
   }
-  const origin = muzzlePoint(player);
+  const origin = shotOrigin();
   const wpn = getWeapon(run);
   let maxBounces = wpn.bounces + run.mods.bounceBonus;
   if (run.mods.forceNoBounce) maxBounces = 0;
@@ -1059,6 +1213,7 @@ function resolveHits(shot) {
           hurtEnemy(enemy);
           spawnDamage(particles, enemy.x, enemy.y, 1, true);
           spawnBlot(particles, enemy.x, enemy.y, "#1a3d6e", 6);
+          if (!enemy.alive) noteKill(enemy);
           shot.alive = false;
           return;
         }
@@ -1072,18 +1227,7 @@ function resolveHits(shot) {
           if (!enemy.alive) break;
           hurtEnemy(enemy);
         }
-        if (!enemy.alive) {
-          sfx.kill();
-          const needAmmo = usesAmmo(run) && run.ammo <= 0;
-          maybeDropLoot(enemy.x, enemy.y, needAmmo);
-          if (enemy.kind === "champion") {
-            pendingBounty += 1;
-            grantInvuln(player, 2);
-          }
-          if (run.mods.lifeSteal > 0 && Math.random() < run.mods.lifeSteal) {
-            healPlayer(player);
-          }
-        }
+        if (!enemy.alive) noteKill(enemy);
         if (shot.pierce > 0) {
           shot.pierce -= 1;
         } else {
@@ -1186,6 +1330,7 @@ function frame(now) {
     return;
   }
 
+  tickHudPulse(dt);
   syncMoveSpeed(player, run);
   const axis = input.axis();
   updatePlayer(player, input, sheet.walls, dt, locked, sheet.grid, sheet);
@@ -1198,6 +1343,7 @@ function frame(now) {
     trySealEntry();
     tryOpenExit();
     updateGates(sheet, dt);
+    tickObjective(dt);
     tickDeadline(dt);
     tickSpawner(spawner, dt, world());
     for (const e of enemies) {
@@ -1223,7 +1369,7 @@ function frame(now) {
       locked,
       sheet.spawnDens || [],
       {
-        huntMode: hunting,
+        huntMode: hunting || sheet.objective === "survive",
         visionMult: run.mods.visionMult * (1 + 0.08 * (run.heat || 0)),
         enemySpeedMult: run.mods.enemySpeedMult * (1 + 0.1 * (run.heat || 0)),
         dodgeFail: run.mods.dodgeFail,

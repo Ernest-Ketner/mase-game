@@ -30,6 +30,34 @@ export function worldToCell(x, y) {
   };
 }
 
+function pointInWall(x, y, grid) {
+  if (x < MARGIN || y < MARGIN || x >= MARGIN + COLS * CELL || y >= MARGIN + ROWS * CELL) {
+    return false;
+  }
+  const cell = worldToCell(x, y);
+  return isWall(grid, cell.c, cell.r);
+}
+
+/** Дуло не должно оказываться внутри стены: иначе луч стартует уже за гранью и идёт по толще. */
+export function clearShotOrigin(fromX, fromY, ox, oy, grid) {
+  if (!grid || !pointInWall(ox, oy, grid)) return { x: ox, y: oy };
+  const dx = ox - fromX;
+  const dy = oy - fromY;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return { x: fromX, y: fromY };
+  const ux = dx / len;
+  const uy = dy / len;
+  let lo = 0;
+  let hi = len;
+  for (let i = 0; i < 10; i++) {
+    const mid = (lo + hi) * 0.5;
+    if (pointInWall(fromX + ux * mid, fromY + uy * mid, grid)) hi = mid;
+    else lo = mid;
+  }
+  const back = Math.max(0, lo - 1.25);
+  return { x: fromX + ux * back, y: fromY + uy * back };
+}
+
 export function openNeighbors(grid, c, r) {
   const out = [];
   const dirs = [

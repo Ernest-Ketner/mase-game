@@ -113,27 +113,34 @@ export function isAvailable(run, upgrade) {
   return true;
 }
 
-function weightOf(u) {
-  return RARITY_WEIGHT[u.rarity] || 6;
+const LIFE_IDS = new Set(["hp_max", "level_heal", "target_heal", "life_steal", "lucky"]);
+
+function weightOf(u, lowLife = false) {
+  const base = RARITY_WEIGHT[u.rarity] || 6;
+  if (!lowLife || !LIFE_IDS.has(u.id)) return base;
+  if (u.id === "hp_max") return base * 8;
+  return base * 4;
 }
 
-function pickWeighted(list, rng) {
+function pickWeighted(list, rng, lowLife = false) {
   let sum = 0;
-  for (const u of list) sum += weightOf(u);
+  for (const u of list) sum += weightOf(u, lowLife);
   if (sum <= 0) return null;
   let roll = rng() * sum;
   for (const u of list) {
-    roll -= weightOf(u);
+    roll -= weightOf(u, lowLife);
     if (roll <= 0) return u;
   }
   return list[list.length - 1];
 }
 
-export function pickOffers(run, count = 2, rng = Math.random) {
+export function pickOffers(run, count = 2, rng = Math.random, opts = {}) {
+  const lowLife = !!opts.lowLife;
   const pool = UPGRADE_CATALOG.filter((u) => isAvailable(run, u));
   if (pool.length === 0) return [];
   const syn = new Set(weaponSyn(run));
   const synergy = pool.filter((u) => u.syn && syn.has(u.syn) && !u.weapon);
+  const life = pool.filter((u) => LIFE_IDS.has(u.id));
   const picks = [];
   const used = new Set();
 
@@ -144,14 +151,15 @@ export function pickOffers(run, count = 2, rng = Math.random) {
     used.add(u.id);
   };
 
-  if (synergy.length > 0) take(pickWeighted(synergy, rng));
+  if (lowLife && life.length > 0 && rng() < 0.75) take(pickWeighted(life, rng, true));
+  else if (synergy.length > 0) take(pickWeighted(synergy, rng, lowLife));
 
   let guard = 0;
   while (picks.length < Math.min(count, pool.length) && guard < 40) {
     guard += 1;
     const rest = pool.filter((u) => !used.has(u.id));
     if (rest.length === 0) break;
-    take(pickWeighted(rest, rng));
+    take(pickWeighted(rest, rng, lowLife));
   }
   return picks.slice(0, count);
 }

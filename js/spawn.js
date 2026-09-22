@@ -211,6 +211,14 @@ export function tickSpawner(spawner, dt, world) {
   const champMin = heat >= 1 && levelNum >= 2 ? 2 : 3;
   const capChamp = championCap(levelNum, heat);
 
+  if (world.sheet?.objective === "boss" && spawner.championDone < 1 && levelNum >= 3) {
+    if (queuePack(spawner, world, "champion")) {
+      spawner.championDone += 1;
+      spawner.championEvent = 0.85;
+      world.onChampionEvent?.();
+    }
+  }
+
   if (phase !== "scout") {
     if (levelNum >= 2 && !spawner.wardenDone) {
       if (queuePack(spawner, world, "warden")) spawner.wardenDone = true;

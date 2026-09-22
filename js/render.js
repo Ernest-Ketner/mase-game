@@ -614,7 +614,32 @@ function drawSoldier(ctx, figure, pen, pose = "idle", kind = "grunt") {
   ctx.restore();
 }
 
+function drawForceField(ctx, x, y) {
+  const pulse = 0.7 + 0.45 * Math.sin(performance.now() / 170);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = SHIELD_GLOW;
+  ctx.lineWidth = 3.4;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 16 + pulse, 18.5 + pulse * 0.6, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = SHIELD_INK;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 3.5]);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 13.2 + pulse * 0.25, 15.4 + pulse * 0.2, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 0.85;
+  ctx.lineWidth = 1.35;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 16.4, 18.6, -0.15, -0.55, 0.85);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawPlayer(ctx, player) {
+  if ((player.shieldCharges ?? 0) > 0) drawForceField(ctx, player.x, player.y);
   if (player.invuln > 0 && Math.floor(player.invuln * 12) % 2 === 0) return;
   drawSoldier(ctx, player, PEN, "idle", "player");
 }
@@ -676,8 +701,8 @@ function drawFogOverlay(ctx, fog, vis = null) {
 function drawMuzzleFlash(ctx, player, amount) {
   if (!player || amount <= 0) return;
   const t = Math.min(1, amount / 0.08);
-  const x = player.x + Math.cos(player.angle) * 13;
-  const y = player.y + Math.sin(player.angle) * 13;
+  const x = player.muzzle?.x ?? player.x + Math.cos(player.angle) * 13;
+  const y = player.muzzle?.y ?? player.y + Math.sin(player.angle) * 13;
   ctx.save();
   ctx.globalAlpha = 0.35 + 0.55 * t;
   ctx.fillStyle = "#d31f1f";
@@ -869,68 +894,109 @@ function drawInkPools(ctx, pools, vis) {
   ctx.restore();
 }
 
+function drawHeart(ctx, x, y, filled, hot) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(0.72, 0.72);
+  ctx.beginPath();
+  ctx.moveTo(0, 5);
+  ctx.bezierCurveTo(-9, -3, -3, -8, 0, -2.2);
+  ctx.bezierCurveTo(3, -8, 9, -3, 0, 5);
+  ctx.closePath();
+  if (filled) {
+    ctx.fillStyle = hot ? "#c42323" : "#9a2b2b";
+    ctx.fill();
+  } else {
+    ctx.globalAlpha = 0.4;
+    ctx.strokeStyle = "#9a2b2b";
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function inkText(ctx, text, x, y, color) {
+  ctx.strokeStyle = "rgba(244, 236, 214, 0.88)";
+  ctx.lineWidth = 3;
+  ctx.lineJoin = "round";
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+}
+
+function blinkColor(amount, danger, calm) {
+  if (!amount || amount <= 0) return calm;
+  return Math.sin(performance.now() / 90) > 0 ? (danger ? "#c42323" : "#1e5aab") : calm;
+}
+
 function drawHud(ctx, view, hud) {
   if (!hud) return;
   const font = "700 16px Caveat, 'Segoe Print', 'Comic Sans MS', cursive";
-  const small = "600 13px Caveat, 'Segoe Print', 'Comic Sans MS', cursive";
+  const small = "600 14px Caveat, 'Segoe Print', 'Comic Sans MS', cursive";
+  const pulse = hud.pulse || {};
   ctx.save();
   ctx.textBaseline = "top";
-  ctx.fillStyle = PEN;
-  ctx.strokeStyle = "rgba(244, 236, 214, 0.7)";
-  ctx.lineWidth = 3;
+  ctx.lineJoin = "round";
   ctx.font = font;
 
   const left = 10;
   const top = 8;
   const hp = hud.hp ?? 0;
   const maxHp = hud.maxHp ?? 3;
+  const heartHot = (pulse.hp || 0) > 0 && Math.sin(performance.now() / 90) > 0;
   for (let i = 0; i < maxHp; i++) {
-    const x = left + i * 14;
-    ctx.beginPath();
-    ctx.moveTo(x, top + 8);
-    ctx.lineTo(x + 8, top);
-    ctx.lineTo(x + 10, top + 10);
-    ctx.closePath();
-    if (i < hp) ctx.fill();
-    else {
-      ctx.globalAlpha = 0.35;
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
+    drawHeart(ctx, left + 8 + i * 14, top + 8, i < hp, heartHot && i < hp);
   }
 
+  const gun = [hud.weaponName, hud.weaponState].filter(Boolean).join(" · ");
   ctx.font = small;
-  ctx.fillText(hud.gun || "", left, top + 18);
+  ctx.textAlign = "left";
+  inkText(ctx, gun, left, top + 16, blinkColor(pulse.gun, hud.weaponHot, hud.weaponHot ? "#9a2b2b" : PEN));
   if (hud.laserHeat != null && (hud.laserHeat > 0.02 || hud.laserHot)) {
     const barW = 74;
-    const barY = top + 34;
+    const barY = top + 32;
     ctx.globalAlpha = 0.28;
     ctx.fillStyle = PEN;
     ctx.fillRect(left, barY, barW, 4);
     ctx.globalAlpha = 1;
     ctx.fillStyle = hud.laserHot ? "#9a2b2b" : "#1e5aab";
     ctx.fillRect(left, barY, barW * Math.min(1, hud.laserHeat), 4);
-    ctx.fillStyle = PEN;
   }
+
   ctx.textAlign = "right";
-  ctx.fillText(hud.marks || "", view.width - 10, top);
-  ctx.fillText(hud.bank || "", view.width - 10, top + 16);
-  if (hud.tag) ctx.fillText(hud.tag, view.width - 10, top + 32);
-  if (hud.clock) {
-    ctx.fillStyle = hud.overtime ? "#9a2b2b" : PEN;
-    ctx.fillText(hud.clock, view.width - 10, top + (hud.tag ? 48 : 32));
-    ctx.fillStyle = PEN;
+  ctx.font = small;
+  const goal = [hud.goalTitle, hud.goalProgress].filter(Boolean).join(" · ");
+  let rightY = top;
+  if (goal) {
+    inkText(ctx, goal, view.width - 10, rightY, blinkColor(pulse.goal, false, PEN));
+    rightY += 16;
   }
+  inkText(ctx, `банк ${hud.bank ?? 0}`, view.width - 10, rightY, blinkColor(pulse.bank, false, PEN));
+  rightY += 16;
+  if (hud.feature) {
+    inkText(ctx, hud.feature, view.width - 10, rightY, blinkColor(pulse.feature, false, PEN));
+    rightY += 16;
+  }
+  if (hud.clock) {
+    inkText(ctx, hud.clock, view.width - 10, rightY, hud.overtime ? "#9a2b2b" : "#1e5aab");
+  }
+
   ctx.textAlign = "left";
+  ctx.font = small;
+  if ((hud.goalLife || 0) > 0 && hud.goalHint && !hud.hint) {
+    ctx.globalAlpha = Math.min(1, hud.goalLife);
+    inkText(ctx, hud.goalHint, left, view.height - 22, "#1e5aab");
+    ctx.globalAlpha = 1;
+  }
   if (hud.hint) {
     ctx.globalAlpha = Math.min(1, hud.hintLife ?? 1);
-    ctx.fillText(hud.hint, left, view.height - 28);
+    inkText(ctx, hud.hint, left, view.height - 22, PEN);
     ctx.globalAlpha = 1;
   }
   if (hud.caption) {
     ctx.textAlign = "center";
     ctx.font = font;
-    ctx.fillText(hud.caption, view.width / 2, view.height - 36);
+    inkText(ctx, hud.caption, view.width / 2, view.height - 36, PEN);
   }
   if (hud.hunt) {
     ctx.save();
