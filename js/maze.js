@@ -1118,15 +1118,177 @@ export function allTargetsHit(targets) {
   return Array.isArray(targets) && targets.length > 0 && targets.every((t) => t.hit);
 }
 
+function fillRect(grid, c0, r0, c1, r1) {
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      if (r <= 0 || c <= 0 || r >= ROWS - 1 || c >= COLS - 1) continue;
+      grid[r][c] = "floor";
+    }
+  }
+}
+
+/** Площадь в центре, край листа остаётся коридорами. */
+function applyArena(grid) {
+  fillRect(grid, 8, 12, 23, 27);
+}
+
+/**
+ * Зал 8×8 — площадь обычной клетки 2×2, умноженная на 16.
+ * Сетка та же: крупнее шаг лабиринта, не размер листа.
+ */
+function applyA1(grid) {
+  const span = 3;
+  for (let sbr = 0; sbr + span <= BAY_ROWS; sbr += span) {
+    for (let sbc = 0; sbc + span <= BAY_COLS; sbc += span) {
+      for (let br = sbr; br < sbr + span; br++) {
+        for (let bc = sbc; bc < sbc + span; bc++) {
+          if (bc + 1 < sbc + span) openLink(grid, { bc, br }, { bc: bc + 1, br });
+          if (br + 1 < sbr + span) openLink(grid, { bc, br }, { bc, br: br + 1 });
+        }
+      }
+      if (sbc + span < BAY_COLS) {
+        const br = sbr + 1;
+        openLink(grid, { bc: sbc + span - 1, br }, { bc: sbc + span, br });
+      }
+      if (sbr + span < BAY_ROWS) {
+        const bc = sbc + 1;
+        openLink(grid, { bc, br: sbr + span - 1 }, { bc, br: sbr + span });
+      }
+    }
+  }
+}
+
+/** Кольцо по краю листа — поля тетради. */
+function applyMargin(grid) {
+  for (let bc = 0; bc < BAY_COLS - 1; bc++) {
+    openLink(grid, { bc, br: 0 }, { bc: bc + 1, br: 0 });
+    openLink(grid, { bc, br: BAY_ROWS - 1 }, { bc: bc + 1, br: BAY_ROWS - 1 });
+  }
+  for (let br = 0; br < BAY_ROWS - 1; br++) {
+    openLink(grid, { bc: 0, br }, { bc: 0, br: br + 1 });
+    openLink(grid, { bc: BAY_COLS - 1, br }, { bc: BAY_COLS - 1, br: br + 1 });
+  }
+}
+
+const FOLD_BC = 4;
+const FOLD_COL = 3 * (FOLD_BC + 1);
+const FOLD_GATES = [2, 9];
+
+function foldGateRows() {
+  const rows = new Set();
+  for (const br of FOLD_GATES) {
+    const r0 = 1 + br * 3;
+    rows.add(r0);
+    rows.add(r0 + 1);
+  }
+  return rows;
+}
+
+function sealFoldColumn(grid) {
+  const gates = foldGateRows();
+  for (let r = 1; r < ROWS - 1; r++) {
+    if (FOLD_COL > 0 && FOLD_COL < COLS - 1) {
+      grid[r][FOLD_COL] = gates.has(r) ? "floor" : "wall";
+    }
+  }
+  for (const br of FOLD_GATES) {
+    openLink(grid, { bc: FOLD_BC, br }, { bc: FOLD_BC + 1, br });
+  }
+}
+
+function foldLinkAllowed(a, b) {
+  const lo = a.bc <= b.bc ? a : b;
+  const hi = a.bc <= b.bc ? b : a;
+  if (hi.bc === lo.bc + 1 && hi.br === lo.br && lo.bc === FOLD_BC) {
+    return FOLD_GATES.includes(lo.br);
+  }
+  return true;
+}
+
+function reconnectFold(grid, start) {
+  let guard = 0;
+  while (guard < 48) {
+    guard += 1;
+    const reach = floodFloor(grid, start);
+    const islands = [];
+    for (let r = 1; r < ROWS - 1; r++) {
+      for (let c = 1; c < COLS - 1; c++) {
+        if (!isFloor(grid, c, r)) continue;
+        if (!reach.has(`${c},${r}`)) islands.push({ c, r });
+      }
+    }
+    if (islands.length === 0) return;
+
+    let linked = false;
+    for (const cell of islands) {
+      const bay = bayOfCell(cell.c, cell.r);
+      if (!bay) continue;
+      const neighBays = [
+        { bc: bay.bc - 1, br: bay.br },
+        { bc: bay.bc + 1, br: bay.br },
+        { bc: bay.bc, br: bay.br - 1 },
+        { bc: bay.bc, br: bay.br + 1 },
+      ];
+      for (const nb of neighBays) {
+        if (nb.bc < 0 || nb.br < 0 || nb.bc >= BAY_COLS || nb.br >= BAY_ROWS) continue;
+        if (!foldLinkAllowed(bay, nb)) continue;
+        const origin = bayOriginCell(nb.bc, nb.br);
+        if (!reach.has(`${origin.c},${origin.r}`)) continue;
+        openLink(grid, bay, nb);
+        linked = true;
+        break;
+      }
+      if (linked) break;
+    }
+    if (!linked) {
+      for (const cell of islands) grid[cell.r][cell.c] = "wall";
+      return;
+    }
+  }
+}
+
+function healFold(grid, rng, startCell) {
+  sealFoldColumn(grid);
+  reconnectFold(grid, startCell);
+  polishGrid(grid);
+  removeDeadEnds(grid, rng);
+  sealFoldColumn(grid);
+  reconnectFold(grid, startCell);
+  polishGrid(grid);
+  removeDeadEnds(grid, rng);
+  sealFoldColumn(grid);
+  reconnectFold(grid, startCell);
+  polishGrid(grid);
+}
+
+function applySheetShape(grid, tagId, rng, startCell) {
+  if (tagId === "arena") applyArena(grid);
+  else if (tagId === "a1") applyA1(grid);
+  else if (tagId === "margin") applyMargin(grid);
+  else if (tagId === "fold") healFold(grid, rng, startCell);
+  else return;
+
+  if (tagId === "fold") return;
+  polishGrid(grid);
+  reconnectFloors(grid, startCell);
+  polishGrid(grid);
+  removeDeadEnds(grid, rng);
+  polishGrid(grid);
+}
+
 export const SHEET_TAGS = [
   { id: "draft", label: "черновик", hint: "зрение короче на 2 клетки" },
   { id: "rooms", label: "клетка в клетке", hint: "больше комнат, лист нарезан плотнее" },
   { id: "narrow", label: "узкие коридоры", hint: "меньше петель, тесные проходы" },
   { id: "gate", label: "порталы у выхода", hint: "враги чаще выходят у нижнего края" },
+  { id: "arena", label: "арена", hint: "открытая площадь в центре, коридоры по краям" },
+  { id: "a1", label: "А1", hint: "залы 8×8: клетка лабиринта в 16 раз крупнее" },
+  { id: "fold", label: "сгиб", hint: "лист пополам, переход только в двух местах" },
+  { id: "margin", label: "поля", hint: "по краю листа кольцевой проход" },
 ];
 
 export function pickSheetTag(levelNum, rng = Math.random) {
-  if (levelNum < 4) return null;
+  if (levelNum < 3) return null;
   const chance = levelNum >= 21 ? 0.85 : 0.55;
   if (rng() > chance) return null;
   return SHEET_TAGS[Math.floor(rng() * SHEET_TAGS.length)];
@@ -1173,6 +1335,13 @@ export function generateLevel(rng = Math.random, options = {}) {
   polishGrid(grid);
   removeDeadEnds(grid, rng);
   polishGrid(grid);
+  applySheetShape(grid, tagId, rng, startCell);
+  if (!isFloor(grid, startCell.c, startCell.r)) {
+    grid[startCell.r][startCell.c] = "floor";
+    tryExpandToBlock(grid, startCell.c, startCell.r);
+    if (tagId === "fold") reconnectFold(grid, startCell);
+    else reconnectFloors(grid, startCell);
+  }
   entryRoom.cells = roomCells(grid, entryRoom.origin, entryRoom.w, entryRoom.h);
   exitLeftRoom.cells = roomCells(grid, exitLeftRoom.origin, exitLeftRoom.w, exitLeftRoom.h);
   exitRightRoom.cells = roomCells(grid, exitRightRoom.origin, exitRightRoom.w, exitRightRoom.h);
