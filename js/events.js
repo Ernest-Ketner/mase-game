@@ -285,6 +285,294 @@ const EVENTS = [
       },
     ],
   },
+  {
+    id: "eraser",
+    title: "Ластик крошится",
+    body: "В пенале серая пыль. Ею ещё можно стереть лишнее — или ссыпать в карман.",
+    choices: [
+      {
+        label: "Стереть штрих",
+        hint: "Вместе со штрихом может уйти и прокачка.",
+        apply: (ctx) => {
+          const name = stripRandomUpgrade(ctx.run, ctx.rng, ctx.player, { avoidWeapons: true });
+          if (name && ctx.rng() < 0.5) return `стёрто: ${name}`;
+          ctx.heal(1);
+          return name ? `пыль села на ${name}, но тебе полегчало (+1 HP)` : "пыль только на пальцах, +1 HP";
+        },
+      },
+      {
+        label: "Ссыпать в карман",
+        hint: "Пригодится. Или нет.",
+        apply: (ctx) => {
+          if (ctx.rng() < 0.5) {
+            const gift = tryUpgrade(ctx.run, ctx.player, "stun_hit", ctx.rng);
+            return gift ? `крошки острые: ${gift}` : "крошки высыпались мимо";
+          }
+          ctx.run.targetBank += 1;
+          return "в пыли завалялась метка: +1 в банк";
+        },
+      },
+    ],
+  },
+  {
+    id: "staple",
+    title: "Скрепка",
+    body: "На поле блестит скрепка. Разогнуть — получится шило. Оставить — держит листы.",
+    choices: [
+      {
+        label: "Разогнуть",
+        hint: "Уколешься или проткнёшь бумагу.",
+        apply: (ctx) => {
+          if (ctx.rng() < 0.4 && ctx.player.hp > 1) {
+            ctx.player.hp -= 1;
+            return "уколол палец";
+          }
+          const gift = tryUpgrade(ctx.run, ctx.player, "pierce_plus", ctx.rng);
+          return gift ? `остриё вышло: ${gift}` : "скрепка согнулась обратно";
+        },
+      },
+      {
+        label: "Скрепить листы",
+        hint: "Пачка толще.",
+        apply: (ctx) => {
+          if (ctx.rng() < 0.55) {
+            ctx.run.targetBank += 2;
+            return "между листами нашлись метки: +2";
+          }
+          const gift = tryUpgrade(ctx.run, ctx.player, "shield_once", ctx.rng);
+          return gift ? `скрепка как броня: ${gift}` : "листы держатся, и только";
+        },
+      },
+    ],
+  },
+  {
+    id: "trace",
+    title: "Калька",
+    body: "Полупрозрачный лист. Через него видно чужой чертёж — или только свои пальцы.",
+    choices: [
+      {
+        label: "Обвести",
+        hint: "Копия редко бывает точной.",
+        apply: (ctx) => {
+          if (ctx.rng() < 0.6) {
+            const name = giveRandomUpgrade(ctx.run, ctx.player, ctx.rng);
+            return name ? `калька сняла: ${name}` : "обвёл пустоту";
+          }
+          ctx.run.targetBank = Math.max(0, ctx.run.targetBank - 1);
+          return "сбился с клетки и потерял метку";
+        },
+      },
+      {
+        label: "Скомкать",
+        hint: "Меньше соблазна копировать.",
+        apply: (ctx) => {
+          ctx.grantInvuln(2);
+          const gift = tryUpgrade(ctx.run, ctx.player, "dodge_nerf", ctx.rng);
+          return gift ? `комком прикрылся: ${gift}` : "скомкал и на секунды прикрылся";
+        },
+      },
+    ],
+  },
+  {
+    id: "lead",
+    title: "Грифель",
+    body: "Карандаш хрустнул. Грифель ещё острый, если не доломать.",
+    choices: [
+      {
+        label: "Заточить о край",
+        hint: "Линия станет злее.",
+        apply: (ctx) => {
+          const id = ctx.rng() < 0.5 ? "dmg" : "crit";
+          const gift = tryUpgrade(ctx.run, ctx.player, id, ctx.rng);
+          return gift ? `остриё: ${gift}` : "грифель только царапает";
+        },
+      },
+      {
+        label: "Доломать",
+        hint: "Короткий, зато в руке.",
+        apply: (ctx) => {
+          if (ctx.player.hp > 1 && ctx.rng() < 0.35) {
+            ctx.player.hp -= 1;
+            return "осколок в палец";
+          }
+          const gift = tryUpgrade(ctx.run, ctx.player, "cd", ctx.rng);
+          return gift ? `короткие штрихи: ${gift}` : "выбросил крошку и пошёл";
+        },
+      },
+    ],
+  },
+  {
+    id: "margin",
+    title: "Поля для замечаний",
+    body: "Учитель оставил пустую полосу. Туда можно вписать оправдание — или смотреть дальше.",
+    choices: [
+      {
+        label: "Вписать оправдание",
+        hint: "Могут засчитать. Могут нет.",
+        apply: (ctx) => {
+          if (ctx.rng() < 0.5) {
+            ctx.run.targetBank += 2;
+            return "«зачёт» на полях: +2 метки";
+          }
+          const name = stripRandomUpgrade(ctx.run, ctx.rng, ctx.player, { avoidWeapons: true });
+          return name ? `зачёркнули красным: ${name}` : "полей не хватило, ничего не вышло";
+        },
+      },
+      {
+        label: "Смотреть в поля",
+        hint: "Там иногда виден следующий штрих.",
+        apply: (ctx) => {
+          const id = ctx.rng() < 0.5 ? "sight" : "hearing";
+          const gift = tryUpgrade(ctx.run, ctx.player, id, ctx.rng);
+          return gift ? `на полях схема: ${gift}` : "поля пустые";
+        },
+      },
+    ],
+  },
+  {
+    id: "punch",
+    title: "Дырокол",
+    body: "Кто-то пробил край листа. Дырки ровные, как прицел.",
+    choices: [
+      {
+        label: "Целиться в дырку",
+        hint: "Либо попадёшь, либо бумага кончится.",
+        apply: (ctx) => {
+          const gift = tryUpgrade(ctx.run, ctx.player, "aim_preview", ctx.rng);
+          if (gift && ctx.rng() < 0.7) return `сквозь дырку видно: ${gift}`;
+          if (ctx.player.hp > 1) ctx.player.hp -= 1;
+          return gift ? `прицел есть, но палец прищемило: ${gift}` : "дырокол щёлкнул вхолостую";
+        },
+      },
+      {
+        label: "Заткнуть дырки",
+        hint: "Тише, зато слепо.",
+        apply: (ctx) => {
+          ctx.heal(1);
+          const gift = tryUpgrade(ctx.run, ctx.player, "enemy_cd", ctx.rng);
+          return gift ? `дыры заткнуты: ${gift}` : "заткнул и перевёл дух, +1 HP";
+        },
+      },
+    ],
+  },
+  {
+    id: "verso",
+    title: "Оборот листа",
+    body: "С той стороны проступает чужой черновик. Перевернуть или не трогать.",
+    choices: [
+      {
+        label: "Перевернуть",
+        hint: "Там решение или помарка.",
+        apply: (ctx) => {
+          if (ctx.rng() < 0.5) {
+            const name = giveRandomUpgrade(ctx.run, ctx.player, ctx.rng);
+            return name ? `на обороте готово: ${name}` : "оборот пустой";
+          }
+          ctx.run.targetBank = Math.max(0, ctx.run.targetBank - 2);
+          return "это был черновик контрольной: −2 метки";
+        },
+      },
+      {
+        label: "Не трогать",
+        hint: "Пусть просвечивает.",
+        apply: (ctx) => {
+          ctx.grantInvuln(1.8);
+          const gift = tryUpgrade(ctx.run, ctx.player, "slow_bots", ctx.rng);
+          return gift ? `чернила с оборота тормозят: ${gift}` : "оборот так и просвечивает";
+        },
+      },
+    ],
+  },
+  {
+    id: "glue",
+    title: "Клей-карандаш",
+    body: "Колпачок не держится. Клей ещё липкий — можно схватить удачу или приклеиться самому.",
+    choices: [
+      {
+        label: "Мазнуть по лучу",
+        hint: "Прилипнет к врагу. Или к стене.",
+        apply: (ctx) => {
+          const id = ctx.rng() < 0.5 ? "stun_hit" : "slow_shots";
+          const gift = tryUpgrade(ctx.run, ctx.player, id, ctx.rng);
+          return gift ? `липкая линия: ${gift}` : "клей высох на пальцах";
+        },
+      },
+      {
+        label: "Заклеить дыру",
+        hint: "Бумага целее, ход уже.",
+        apply: (ctx) => {
+          ctx.heal(2);
+          if (ctx.rng() < 0.4) {
+            const name = stripRandomUpgrade(ctx.run, ctx.rng, ctx.player, { avoidWeapons: true });
+            if (name) return `залепил вместе с ${name}, зато +2 HP`;
+          }
+          return "дыра заклеилась, +2 HP";
+        },
+      },
+    ],
+  },
+  {
+    id: "blotter",
+    title: "Промокашка",
+    body: "Розовая промокашка впитывает всё, до чего дотянется. Можно приложить к луже — или к себе.",
+    choices: [
+      {
+        label: "Промокнуть лужу",
+        hint: "Чернила уйдут. Вместе с чем-нибудь полезным.",
+        apply: (ctx) => {
+          const name = stripRandomUpgrade(ctx.run, ctx.rng, ctx.player, { avoidWeapons: true });
+          const gift = tryUpgrade(ctx.run, ctx.player, "ink_pool", ctx.rng);
+          if (name && gift) return `впитала ${name}, оставила ${gift}`;
+          if (gift) return `лужа собралась: ${gift}`;
+          if (name) return `промокашка съела ${name}`;
+          return "бумага сухая, впитывать нечего";
+        },
+      },
+      {
+        label: "Приложить к руке",
+        hint: "Пятно или передышка.",
+        apply: (ctx) => {
+          if (ctx.rng() < 0.55) {
+            ctx.heal(2);
+            return "розовое тепло: +2 HP";
+          }
+          const gift = tryUpgrade(ctx.run, ctx.player, "life_steal", ctx.rng);
+          return gift ? `пятно пьёт чужое: ${gift}` : "просто розовое пятно";
+        },
+      },
+    ],
+  },
+  {
+    id: "bell",
+    title: "Звонок с урока",
+    body: "Где-то в коридоре трезвонит. Можно сорваться бегом или дописать строку.",
+    choices: [
+      {
+        label: "Сорваться",
+        hint: "Успеешь уйти. Или споткнёшься.",
+        apply: (ctx) => {
+          if (ctx.rng() < 0.45) {
+            const gift = tryUpgrade(ctx.run, ctx.player, "move", ctx.rng);
+            return gift ? `коридор пустой: ${gift}` : "выскочил и ничего не уронил";
+          }
+          ctx.grantInvuln(2.2);
+          return "споткнулся о парту, но на бегу тебя не достать";
+        },
+      },
+      {
+        label: "Дописать строку",
+        hint: "Звонок подождёт. Учитель — нет.",
+        apply: (ctx) => {
+          if (ctx.rng() < 0.5) {
+            const name = giveRandomUpgrade(ctx.run, ctx.player, ctx.rng);
+            return name ? `успел дописать: ${name}` : "строка оборвалась";
+          }
+          ctx.run.targetBank = Math.max(0, ctx.run.targetBank - 1);
+          return "отобрали тетрадь на проверку: −1 метка";
+        },
+      },
+    ],
+  },
 ];
 
 function eligible(event, run) {

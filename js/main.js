@@ -29,7 +29,7 @@ import {
 import { createInput } from "./input.js";
 import { setupCanvas, drawFrame } from "./render.js";
 import { createCamera, snapCamera, updateCamera, screenToWorld, viewSize, shakeCamera } from "./camera.js";
-import { updateEnemies, hurtEnemy, kindHint } from "./enemy.js";
+import { updateEnemies, hurtEnemy, kindHint, stunEnemy } from "./enemy.js";
 import { createRunState, applyPlayerStats, resetLevelShield, usesAmmo, syncMoveSpeed, NOTEBOOK_GOAL, SHEET_AMMO_GRANT } from "./run.js";
 import {
   pickOffers,
@@ -40,6 +40,7 @@ import {
   ammoDropChance,
   offerTitle,
   listTaken,
+  listTakenLines,
 } from "./upgrades.js";
 import {
   createFog,
@@ -707,6 +708,11 @@ function pauseSheetText() {
     lines.push("дальше тетради — срок на каждом листе и короче");
   }
   lines.push("шлюзы снизу: тихо — происшествие, жар — сложнее (серия копится)");
+  const wpn = getWeapon(run);
+  lines.push("");
+  lines.push(`оружие: ${wpn.label}`);
+  const taken = listTakenLines(run);
+  lines.push(taken.length ? taken.join("\n") : "прокачек пока нет");
   return lines.join("\n");
 }
 
@@ -985,6 +991,7 @@ function resolveHits(shot) {
           shot.alive = false;
           return;
         }
+        stunEnemy(enemy, 0.5 + (run.mods.stunBonus || 0));
         if ((enemy.plates ?? 0) > 0) {
           hurtEnemy(enemy);
           spawnDamage(particles, enemy.x, enemy.y, 1, true);

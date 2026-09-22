@@ -148,6 +148,8 @@ body:not(.in-menu) .status {
   text-align: left;
   white-space: pre-line;
   max-width: 88%;
+  max-height: 52%;
+  overflow: auto;
   margin: 0;
   line-height: 1.35;
 }

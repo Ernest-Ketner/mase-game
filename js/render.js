@@ -1,4 +1,5 @@
 import { CELL, COLS, MARGIN, ROWS, cellCenter, worldSize } from "./maze.js";
+import { cellExplored } from "./fog.js";
 import { applyCamera, viewRect } from "./camera.js";
 import { kindMark } from "./enemy.js";
 import { drawFx } from "./fx.js";
@@ -87,8 +88,9 @@ function drawInkPath(ctx, points) {
   ctx.stroke();
 }
 
-function drawWallTiles(ctx, tiles, vis = null) {
+function drawWallTiles(ctx, tiles, vis = null, fog = null) {
   for (const tile of tiles) {
+    if (fog && !cellExplored(fog, tile.c, tile.r)) continue;
     const x = MARGIN + tile.c * CELL;
     const y = MARGIN + tile.r * CELL;
     if (vis && (x > vis.right || y > vis.bottom || x + CELL < vis.left || y + CELL < vis.top)) {
@@ -125,24 +127,32 @@ function drawWallTiles(ctx, tiles, vis = null) {
   }
 }
 
-function drawWallInk(ctx, walls, vis = null) {
+function wallKnown(fog, wall) {
+  if (!fog) return true;
+  return cellExplored(fog, wall.c, wall.r);
+}
+
+function drawWallInk(ctx, walls, vis = null, fog = null) {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.strokeStyle = "rgba(30, 90, 171, 0.26)";
   ctx.lineWidth = 3.6;
   for (const wall of walls) {
+    if (!wallKnown(fog, wall)) continue;
     if (vis && !segInView(wall, vis)) continue;
     drawInkPath(ctx, wall.ghost || wall.ink);
   }
   ctx.strokeStyle = WALL_INK;
   ctx.lineWidth = 2.2;
   for (const wall of walls) {
+    if (!wallKnown(fog, wall)) continue;
     if (vis && !segInView(wall, vis)) continue;
     drawInkPath(ctx, wall.ink);
   }
   ctx.strokeStyle = WALL_INK_DARK;
   ctx.lineWidth = 1;
   for (const wall of walls) {
+    if (!wallKnown(fog, wall)) continue;
     if (vis && !segInView(wall, vis)) continue;
     drawInkPath(ctx, wall.ink);
   }
@@ -305,7 +315,7 @@ function drawExitStamps(ctx, level, heatLevel = 0) {
 }
 
 /** Створки шлюза: openAmount 0 = закрыто, 1 = открыто. */
-function drawGate(ctx, gate) {
+function drawGate(ctx, gate, fog = null) {
   if (!gate || !gate.cells || gate.cells.length === 0) return;
   const open = gate.openAmount ?? (gate.sealed ? 0 : 1);
   const cover = 1 - open;
@@ -327,6 +337,7 @@ function drawGate(ctx, gate) {
   ctx.lineJoin = "round";
 
   for (const cell of gate.cells) {
+    if (fog && !cellExplored(fog, cell.c, cell.r)) continue;
     const x = MARGIN + cell.c * CELL;
     const y = MARGIN + cell.r * CELL;
     const leaf = CELL * 0.5 * ease;
@@ -383,13 +394,13 @@ function drawGate(ctx, gate) {
   ctx.restore();
 }
 
-function drawGates(ctx, level) {
+function drawGates(ctx, level, fog = null) {
   if (!level) return;
-  drawGate(ctx, level.entryGate);
+  drawGate(ctx, level.entryGate, fog);
   if (level.exits?.length) {
-    for (const ex of level.exits) drawGate(ctx, ex.gate);
+    for (const ex of level.exits) drawGate(ctx, ex.gate, fog);
   } else {
-    drawGate(ctx, level.exitGate);
+    drawGate(ctx, level.exitGate, fog);
   }
 }
 
@@ -683,6 +694,17 @@ function drawEnemy(ctx, enemy, mode = "full") {
     ctx.arc(enemy.x, enemy.y, 15 + pulse * 0.4, 0, Math.PI * 2);
     ctx.stroke();
     ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  if (enemy.stunTimer > 0) {
+    ctx.save();
+    ctx.strokeStyle = pen;
+    ctx.globalAlpha = 0.75;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(enemy.x, enemy.y - 16, 4.2, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -981,11 +1003,11 @@ export function drawFrame(
   if (fx.camera) applyCamera(ctx, fx.camera);
   const vis = fx.camera ? viewRect(fx.camera, CELL) : null;
   drawPaper(ctx, world.width, world.height);
-  drawWallTiles(ctx, level.tiles, vis);
-  drawGates(ctx, level);
+  drawWallTiles(ctx, level.tiles, vis, fx.fog);
+  drawGates(ctx, level, fx.fog);
   drawSpawnDens(ctx, level.spawnDens, performance.now() / 1000, fx.fog, fx.huntFlash || 0);
   drawExitStamps(ctx, level, fx.hud?.heat || 0);
-  drawWallInk(ctx, level.walls, vis);
+  drawWallInk(ctx, level.walls, vis, fx.fog);
   if (fx.fog) drawFogOverlay(ctx, fx.fog, vis);
   const seen = (x, y) => !fx.fog || fx.fog.worldVisible(x, y);
   for (const target of level.targets) {

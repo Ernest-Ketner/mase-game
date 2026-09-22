@@ -35,6 +35,7 @@ export const UPGRADE_CATALOG = [
   { id: "level_heal", title: "Передышка", desc: "В начале каждого следующего листа +1 HP", rarity: "rare", syn: "any", effect: { set: { levelHeal: true } } },
   { id: "pierce_plus", title: "Сквозняк", desc: "+1 пробитие всем лучам", maxStacks: 2, rarity: "rare", syn: "pierce", effect: { add: { pierceBonus: 1 } } },
   { id: "fat_beam", title: "Толстый луч", desc: "Свой снаряд шире, проще попасть", maxStacks: 2, rarity: "common", syn: "any", effect: { mul: { shotRadiusMult: 1.4 } } },
+  { id: "stun_hit", title: "Оглушение", desc: "Попадание держит врага ещё +0.3 с", maxStacks: 3, rarity: "common", syn: "any", effect: { add: { stunBonus: 0.3 } } },
   { id: "first_shot", title: "Первый выстрел", desc: "Первый выстрел на листе без перезарядки и +1 урон", rarity: "rare", syn: "any", special: "first_shot" },
   { id: "enemy_cd", title: "Сбой", desc: "Враги стреляют реже", maxStacks: 2, rarity: "common", syn: "any", effect: { mul: { enemyFireMult: 1.25 } } },
   { id: "dodge_nerf", title: "Слепой шаг", desc: "Враги чаще не успевают шагнуть от луча", maxStacks: 2, rarity: "common", syn: "any", effect: { add: { dodgeFail: 0.2 } } },
@@ -246,6 +247,14 @@ export function takenLabel(upgrade, run) {
 
 export function listTaken(run) {
   return UPGRADE_CATALOG.map((u) => takenLabel(u, run)).filter(Boolean);
+}
+
+export function listTakenLines(run) {
+  return UPGRADE_CATALOG.map((u) => {
+    const title = takenLabel(u, run);
+    if (!title) return null;
+    return `${title} — ${u.desc}`;
+  }).filter(Boolean);
 }
 
 export function applyUpgrade(run, id, player = null) {

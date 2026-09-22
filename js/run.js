@@ -65,6 +65,7 @@ export function createRunState() {
       inkPool: false,
       fogCut: false,
       lastClip: false,
+      stunBonus: 0,
     },
   };
 }

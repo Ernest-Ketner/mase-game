@@ -823,6 +823,7 @@ export function spawnEnemy(spawn, maxHp, kind = "grunt", homeZone = 0, extras = 
     emergeMax: EMERGE_DURATION,
     scale: 1,
     noiseTimer: 0,
+    stunTimer: 0,
     wantsShout: false,
     wantsBackup: false,
     thinkTimer: Math.random() * 0.2,
@@ -844,6 +845,11 @@ export function spawnEnemy(spawn, maxHp, kind = "grunt", homeZone = 0, extras = 
     enemy.abilities = load.abilities.slice();
   }
   return enemy;
+}
+
+export function stunEnemy(enemy, seconds) {
+  if (!enemy?.alive || seconds <= 0) return;
+  enemy.stunTimer = Math.max(enemy.stunTimer || 0, seconds);
 }
 
 export function hurtEnemy(enemy) {
@@ -971,6 +977,12 @@ export function updateEnemies(
     if (enemy.noiseTimer > 0) enemy.noiseTimer = Math.max(0, enemy.noiseTimer - dt);
     if (enemy.emergeTimer > 0) {
       enemy.emergeTimer = Math.max(0, enemy.emergeTimer - dt);
+      enemy.moving = false;
+      continue;
+    }
+
+    if (enemy.stunTimer > 0) {
+      enemy.stunTimer = Math.max(0, enemy.stunTimer - dt);
       enemy.moving = false;
       continue;
     }

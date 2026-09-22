@@ -23,9 +23,11 @@ function cellDist(c0, r0, c1, r1) {
 export function createFog() {
   const until = new Float64Array(COLS * ROWS);
   until.fill(-1);
+  const explored = new Uint8Array(COLS * ROWS);
   const fog = {
     now: 0,
     until,
+    explored,
     losX: -1e9,
     losY: -1e9,
     hearC: -1,
@@ -46,6 +48,7 @@ export function createFog() {
 
 export function resetFog(fog) {
   fog.until.fill(-1);
+  if (fog.explored) fog.explored.fill(0);
   fog.now = 0;
   fog.losX = -1e9;
   fog.losY = -1e9;
@@ -59,6 +62,17 @@ export function resetFog(fog) {
 export function cellVisible(fog, c, r) {
   if (c < 0 || r < 0 || c >= COLS || r >= ROWS) return false;
   return fog.until[idx(c, r)] > fog.now;
+}
+
+export function cellExplored(fog, c, r) {
+  if (!fog?.explored) return true;
+  if (c < 0 || r < 0 || c >= COLS || r >= ROWS) return false;
+  return fog.explored[idx(c, r)] === 1;
+}
+
+function markExplored(fog, c, r) {
+  if (c < 0 || r < 0 || c >= COLS || r >= ROWS) return;
+  fog.explored[idx(c, r)] = 1;
 }
 
 export function worldVisible(fog, x, y) {
@@ -87,6 +101,7 @@ function refreshLos(fog, grid, player) {
       const r = here.r + dr;
       if (c < 0 || r < 0 || c >= COLS || r >= ROWS) continue;
       fog.until[idx(c, r)] = remember;
+      markExplored(fog, c, r);
     }
   }
 
@@ -99,6 +114,7 @@ function refreshLos(fog, grid, player) {
       if (dc * dc + dr * dr > r2) continue;
       if (gridLos(grid, here.c, here.r, c, r)) {
         fog.until[idx(c, r)] = remember;
+        markExplored(fog, c, r);
       }
     }
   }
@@ -120,6 +136,7 @@ export function revealWorld(fog, x, y, seconds = 1.5, radius = 1) {
       if (c < 0 || r < 0 || c >= COLS || r >= ROWS) continue;
       const i = idx(c, r);
       fog.until[i] = Math.max(fog.until[i], until);
+      fog.explored[i] = 1;
     }
   }
 }

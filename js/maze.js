@@ -738,9 +738,11 @@ function makeInk(x1, y1, x2, y2, rng, amp = 1.15) {
   return points;
 }
 
-function addWall(walls, x1, y1, x2, y2, axis, rng) {
+function addWall(walls, x1, y1, x2, y2, axis, rng, c, r) {
   walls.push({
     id: walls.length,
+    c,
+    r,
     x1,
     y1,
     x2,
@@ -758,10 +760,10 @@ function buildWalls(grid, rng) {
       if (grid[r][c] !== "wall") continue;
       const x = MARGIN + c * CELL;
       const y = MARGIN + r * CELL;
-      if (!isWall(grid, c, r - 1)) addWall(walls, x, y, x + CELL, y, "h", rng);
-      if (!isWall(grid, c, r + 1)) addWall(walls, x, y + CELL, x + CELL, y + CELL, "h", rng);
-      if (!isWall(grid, c - 1, r)) addWall(walls, x, y, x, y + CELL, "v", rng);
-      if (!isWall(grid, c + 1, r)) addWall(walls, x + CELL, y, x + CELL, y + CELL, "v", rng);
+      if (!isWall(grid, c, r - 1)) addWall(walls, x, y, x + CELL, y, "h", rng, c, r);
+      if (!isWall(grid, c, r + 1)) addWall(walls, x, y + CELL, x + CELL, y + CELL, "h", rng, c, r);
+      if (!isWall(grid, c - 1, r)) addWall(walls, x, y, x, y + CELL, "v", rng, c, r);
+      if (!isWall(grid, c + 1, r)) addWall(walls, x + CELL, y, x + CELL, y + CELL, "v", rng, c, r);
     }
   }
   return walls;
