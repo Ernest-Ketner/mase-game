@@ -63,7 +63,18 @@ import {
 } from "./spawn.js";
 import { parseSeedFromUrl, randomSeed, sheetRng, starterWeaponId } from "./seed.js";
 import { killQuota, objectiveById, pickSheetObjective, surviveSeconds } from "./objectives.js";
-import { bindAudioUnlock, sfx, toggleMute, isMuted } from "./audio.js";
+import {
+  bindAudioUnlock,
+  sfx,
+  toggleMute,
+  isMuted,
+  unlockAudio,
+  isMusicOn,
+  setMusicOn,
+  isSfxOn,
+  setSfxOn,
+  setMusicTrack,
+} from "./audio.js";
 import { createFx, resetFx, spawnBlot, spawnDamage, updateFx } from "./fx.js";
 import { pickSheetEvent } from "./events.js";
 import { sheetTimeLimit, overtimeInterval, formatClock } from "./deadline.js";
@@ -191,6 +202,30 @@ function hidePanels() {
     eventBody.classList.remove("is-result");
   }
   if (eventContinue) eventContinue.classList.add("hidden");
+  document.getElementById("sound-panel")?.classList.add("hidden");
+  document.getElementById("options-panel")?.classList.add("hidden");
+}
+
+function syncSoundButtons() {
+  const musicOn = isMusicOn();
+  const sfxOn = isSfxOn();
+  for (const id of ["toggle-music", "opt-music"]) {
+    const music = document.getElementById(id);
+    if (!music) continue;
+    music.textContent = musicOn ? "Музыка: вкл" : "Музыка: выкл";
+    music.classList.toggle("is-off", !musicOn);
+  }
+  for (const id of ["toggle-sfx", "opt-sfx"]) {
+    const sounds = document.getElementById(id);
+    if (!sounds) continue;
+    sounds.textContent = sfxOn ? "Звуки: вкл" : "Звуки: выкл";
+    sounds.classList.toggle("is-off", !sfxOn);
+  }
+}
+
+function showSoundPanel() {
+  syncSoundButtons();
+  document.getElementById("sound-panel")?.classList.remove("hidden");
 }
 
 function showOverlay(title, sub) {
@@ -204,6 +239,272 @@ function hideOverlay() {
   overlayEl.classList.remove("is-defeat");
   setMenuChrome(false);
   hidePanels();
+}
+
+let paperBusy = false;
+let paperToken = 0;
+
+let paperFrame = 0;
+const FOLD_MS = 4400;
+const FOLD_CORNERS = ["tl", "tr", "br", "bl"];
+// Сначала четыре угла вместе доходят до встречи сгибов, потом те же клапаны складываются ещё раз.
+const FOLD_SLOTS = [
+  { start: 0.0, span: 0.4 },
+  { start: 0.03, span: 0.4 },
+  { start: 0.06, span: 0.4 },
+  { start: 0.09, span: 0.4 },
+  { start: 0.52, span: 0.38 },
+  { start: 0.55, span: 0.38 },
+  { start: 0.58, span: 0.38 },
+  { start: 0.61, span: 0.38 },
+];
+
+function foldProgress(kind, t, index) {
+  const slot = FOLD_SLOTS[kind === "smooth" ? FOLD_SLOTS.length - 1 - index : index];
+  let local = (t - slot.start) / slot.span;
+  local = Math.max(0, Math.min(1, local));
+  const eased = local * local * (3 - 2 * local);
+  return kind === "smooth" ? 1 - eased : eased;
+}
+
+function poly(ctx, points) {
+  ctx.beginPath();
+  ctx.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+  ctx.closePath();
+}
+
+function foldCorner(corner, w, h, inset) {
+  if (corner === "tr") return [w - inset, inset];
+  if (corner === "tl") return [inset, inset];
+  if (corner === "br") return [w - inset, h - inset];
+  return [inset, h - inset];
+}
+
+function foldShape(corner, cx, cy, depth) {
+  if (corner === "tr") {
+    const k = cx - cy - depth;
+    return {
+      hole: [[cx, cy], [cx - depth, cy], [cx, cy + depth]],
+      flap: [[cx - depth, cy], [cx, cy + depth], [cx - depth, cy + depth]],
+      crease: [[cx - depth, cy], [cx, cy + depth]],
+      xform: [0, 1, 1, 0, k, -k],
+    };
+  }
+  if (corner === "tl") {
+    const k = cx + cy + depth;
+    return {
+      hole: [[cx, cy], [cx + depth, cy], [cx, cy + depth]],
+      flap: [[cx + depth, cy], [cx, cy + depth], [cx + depth, cy + depth]],
+      crease: [[cx + depth, cy], [cx, cy + depth]],
+      xform: [0, -1, -1, 0, k, k],
+    };
+  }
+  if (corner === "br") {
+    const k = cx + cy - depth;
+    return {
+      hole: [[cx, cy], [cx - depth, cy], [cx, cy - depth]],
+      flap: [[cx - depth, cy], [cx, cy - depth], [cx - depth, cy - depth]],
+      crease: [[cx - depth, cy], [cx, cy - depth]],
+      xform: [0, -1, -1, 0, k, k],
+    };
+  }
+  const k = cx - cy + depth;
+  return {
+    hole: [[cx, cy], [cx + depth, cy], [cx, cy - depth]],
+    flap: [[cx + depth, cy], [cx, cy - depth], [cx + depth, cy - depth]],
+    crease: [[cx + depth, cy], [cx, cy - depth]],
+    xform: [0, 1, 1, 0, k, -k],
+  };
+}
+
+function reflectPoint(point, a, b) {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len2 = dx * dx + dy * dy || 1;
+  const proj = ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / len2;
+  const fx = a[0] + proj * dx;
+  const fy = a[1] + proj * dy;
+  return [fx * 2 - point[0], fy * 2 - point[1]];
+}
+
+function reflectTransform(a, b) {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const m00 = 2 * ux * ux - 1;
+  const m01 = 2 * ux * uy;
+  const m11 = 2 * uy * uy - 1;
+  return [m00, m01, m01, m11, a[0] - m00 * a[0] - m01 * a[1], a[1] - m01 * a[0] - m11 * a[1]];
+}
+
+function multiplyXform(a, b) {
+  return [
+    a[0] * b[0] + a[2] * b[1],
+    a[1] * b[0] + a[3] * b[1],
+    a[0] * b[2] + a[2] * b[3],
+    a[1] * b[2] + a[3] * b[3],
+    a[0] * b[4] + a[2] * b[5] + a[4],
+    a[1] * b[4] + a[3] * b[5] + a[5],
+  ];
+}
+
+function tipFold(flap, depth) {
+  const toward = (from, to) => {
+    const dx = to[0] - from[0];
+    const dy = to[1] - from[1];
+    const len = Math.hypot(dx, dy) || 1;
+    const t = Math.min(0.5, depth / len);
+    return [from[0] + dx * t, from[1] + dy * t];
+  };
+  const tip = flap[2];
+  const p = toward(tip, flap[0]);
+  const q = toward(tip, flap[1]);
+  return {
+    hole: [tip, p, q],
+    flap: [p, q, reflectPoint(tip, p, q)],
+    crease: [p, q],
+    xform: reflectTransform(p, q),
+  };
+}
+
+function paintFlap(ctx, shot, shape, w, h) {
+  const { flap, crease, xform } = shape;
+  const tip = flap[2];
+  const midX = (w / 2 - tip[0]) * 0.05;
+  const midY = (h / 2 - tip[1]) * 0.05;
+  ctx.save();
+  poly(ctx, [
+    [flap[0][0] + midX, flap[0][1] + midY],
+    [flap[1][0] + midX, flap[1][1] + midY],
+    [tip[0] + midX * 2.4, tip[1] + midY * 2.4],
+  ]);
+  ctx.fillStyle = "rgba(48, 30, 16, 0.28)";
+  ctx.fill();
+  ctx.restore();
+  ctx.save();
+  poly(ctx, flap);
+  ctx.clip();
+  ctx.setTransform(xform[0], xform[1], xform[2], xform[3], xform[4], xform[5]);
+  ctx.drawImage(shot, 0, 0);
+  ctx.restore();
+  ctx.save();
+  poly(ctx, flap);
+  ctx.clip();
+  const wash = ctx.createLinearGradient(crease[0][0], crease[0][1], tip[0], tip[1]);
+  wash.addColorStop(0, "rgba(232, 220, 196, 0.62)");
+  wash.addColorStop(1, "rgba(244, 236, 214, 0.28)");
+  ctx.fillStyle = wash;
+  ctx.fill();
+  ctx.restore();
+  ctx.beginPath();
+  ctx.moveTo(crease[0][0], crease[0][1]);
+  ctx.lineTo(crease[1][0], crease[1][1]);
+  ctx.strokeStyle = "rgba(62, 42, 24, 0.7)";
+  ctx.lineWidth = Math.max(2, w / 220);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255, 250, 236, 0.55)";
+  ctx.lineWidth = Math.max(1, w / 380);
+  ctx.stroke();
+}
+
+function paintSheetFold(fold, shot, kind, t) {
+  const w = shot.width;
+  const h = shot.height;
+  if (fold.width !== w || fold.height !== h) {
+    fold.width = w;
+    fold.height = h;
+  }
+  const ctx = fold.getContext("2d");
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const meet = Math.min(w, h) / 2;
+  const outers = FOLD_CORNERS.map((corner, index) => {
+    const p = foldProgress(kind, t, index);
+    if (p < 0.015) return null;
+    const [cx, cy] = foldCorner(corner, w, h, 0);
+    return foldShape(corner, cx, cy, p * meet);
+  });
+  const fullOuters = FOLD_CORNERS.map((corner) => {
+    const [cx, cy] = foldCorner(corner, w, h, 0);
+    return foldShape(corner, cx, cy, meet);
+  });
+  const tips = FOLD_CORNERS.map((corner, index) => {
+    const p = foldProgress(kind, t, index + 4);
+    if (p < 0.015) return null;
+    const flap = fullOuters[index].flap;
+    const leg = Math.hypot(flap[2][0] - flap[0][0], flap[2][1] - flap[0][1]);
+    const shape = tipFold(flap, p * leg * 0.5);
+    shape.xform = multiplyXform(shape.xform, fullOuters[index].xform);
+    return shape;
+  });
+  for (const shape of outers) {
+    if (!shape) continue;
+    poly(ctx, shape.hole);
+    const hole = ctx.createLinearGradient(0, 0, 0, h);
+    hole.addColorStop(0, "#7a5e4d");
+    hole.addColorStop(1, "#4a382e");
+    ctx.fillStyle = hole;
+    ctx.fill();
+  }
+  for (const shape of outers) {
+    if (!shape) continue;
+    paintFlap(ctx, shot, shape, w, h);
+  }
+  for (const shape of tips) {
+    if (!shape) continue;
+    ctx.save();
+    poly(ctx, shape.hole);
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.fillStyle = "#000";
+    ctx.fill();
+    ctx.restore();
+    paintFlap(ctx, shot, shape, w, h);
+  }
+}
+
+function playPaper(kind, done) {
+  const paper = document.getElementById("paper");
+  const game = document.getElementById("game");
+  const fold = document.getElementById("fold");
+  paperBusy = true;
+  const token = ++paperToken;
+  const begin = () => {
+    if (token !== paperToken || !paper || !game || !fold) return;
+    const shot = document.createElement("canvas");
+    shot.width = game.width;
+    shot.height = game.height;
+    shot.getContext("2d").drawImage(game, 0, 0);
+    paper.classList.remove("is-crumpling", "is-smoothing");
+    void paper.offsetWidth;
+    paper.classList.add(kind === "crumple" ? "is-crumpling" : "is-smoothing");
+    if (kind === "crumple") sfx.crumple();
+    else sfx.smooth();
+    const t0 = performance.now();
+    const step = (now) => {
+      if (token !== paperToken) return;
+      const t = Math.min(1, (now - t0) / FOLD_MS);
+      paintSheetFold(fold, shot, kind, t);
+      if (t < 1) paperFrame = requestAnimationFrame(step);
+    };
+    paperFrame = requestAnimationFrame(step);
+    window.setTimeout(() => {
+      if (token !== paperToken) return;
+      cancelAnimationFrame(paperFrame);
+      if (kind === "smooth") {
+        const foldCtx = fold.getContext("2d");
+        foldCtx.setTransform(1, 0, 0, 1, 0, 0);
+        foldCtx.clearRect(0, 0, fold.width, fold.height);
+      }
+      paper.classList.remove("is-crumpling", "is-smoothing");
+      paperBusy = false;
+      done?.();
+    }, FOLD_MS);
+  };
+  if (kind === "smooth") window.setTimeout(begin, 48);
+  else begin();
 }
 
 function exitNeed() {
@@ -228,6 +529,7 @@ function world() {
       sfx.hunt();
     },
     heat: run.heat || 0,
+    player,
   };
 }
 
@@ -340,9 +642,16 @@ function showMenu(screen = "root") {
   ensureMenuBackdrop();
   setMenuChrome(true, screen === "root");
   overlayEl.classList.remove("hidden");
+  syncMusic();
   if (screen === "root") {
     showOverlay("Лабиринт", "Играть — новый лист 1 · Enter");
     if (menuPanel) menuPanel.classList.remove("hidden");
+    return;
+  }
+  if (screen === "options") {
+    showOverlay("Опции", "M глушит музыку и звуки сразу");
+    document.getElementById("options-panel")?.classList.remove("hidden");
+    syncSoundButtons();
     return;
   }
   if (screen === "seed") {
@@ -359,7 +668,7 @@ function showMenu(screen = "root") {
   if (screen === "controls") {
     showOverlay("Управление", "");
     menuPageText.textContent =
-      "WASD или стрелки — ходить.\nЛКМ или пробел — выстрел, можно зажать.\nЛазер греется и после очереди стынет.\nПосле «Играть» можно вписать сид. Пустое поле — случайный. На одном сиде всегда одно стартовое оружие.\nM — выключить или включить звук.\nНа бегу лучи разлетаются шире, чем стоя.\nПрицел (пунктир траектории) берётся как апгрейд.\nEsc — пауза (в меню — назад).\nR — начать забег заново с того же сида.";
+      "WASD или стрелки — ходить.\nЛКМ или пробел — выстрел, можно зажать.\nЛазер греется и после очереди стынет.\nПосле «Играть» можно вписать сид. Пустое поле — случайный. На одном сиде всегда одно стартовое оружие.\nМузыка и звуки — в «Опциях» и на паузе.\nM — выключить или включить сразу и музыку, и звуки.\nНа бегу лучи разлетаются шире, чем стоя.\nПрицел (пунктир траектории) берётся как апгрейд.\nEsc — пауза (в меню — назад).\nR — начать забег заново с того же сида.";
   } else if (screen === "about") {
     showOverlay("Об игре", "");
     menuPageText.textContent =
@@ -552,27 +861,56 @@ function loadSheet(keepPlayer = false) {
   tryOpenExit();
   resetHudPulse();
   updateHud();
+  syncMusic();
+}
+
+const CALM_TRACKS = ["ink", "margin", "dusk"];
+
+function syncMusic() {
+  if (mode !== "play" || !sheet) {
+    setMusicTrack("ink");
+    return;
+  }
+  const timed = sheetTimed || sheet.objective === "survive";
+  if (timed) {
+    setMusicTrack("rush");
+    return;
+  }
+  setMusicTrack(CALM_TRACKS[(levelNum + (runSeed % 3)) % CALM_TRACKS.length]);
 }
 
 function restartFromFirst() {
+  const fold = mode === "play";
   mode = "play";
   levelNum = 1;
   run = createRunState();
   applyWeaponSwap(run, starterWeaponId(runSeed));
   notebookFlash = 0;
-  loadSheet(false);
+  const begin = () => {
+    loadSheet(false);
+    playPaper("smooth");
+  };
+  if (fold) {
+    hideOverlay();
+    playPaper("crumple", begin);
+  } else {
+    begin();
+  }
 }
 
 function goNextSheet() {
-  hideUpgradeSelect();
-  hideOverlay();
-  const from = levelNum;
-  levelNum += 1;
-  if (from === NOTEBOOK_GOAL) {
-    notebookFlash = 2.4;
-    sfx.notebook();
-  }
-  loadSheet(true);
+  playPaper("crumple", () => {
+    hideUpgradeSelect();
+    hideOverlay();
+    const from = levelNum;
+    levelNum += 1;
+    if (from === NOTEBOOK_GOAL) {
+      notebookFlash = 2.4;
+      sfx.notebook();
+    }
+    loadSheet(true);
+    playPaper("smooth", () => beginUpgradePick());
+  });
 }
 
 function shopCount() {
@@ -594,6 +932,7 @@ function beginUpgradePick() {
 
 function afterShop() {
   hideUpgradeSelect();
+  hideOverlay();
   if (run.pendingEvent) {
     run.pendingEvent = false;
     const rng = sheetRng(runSeed, levelNum + 77001);
@@ -603,7 +942,7 @@ function afterShop() {
       return;
     }
   }
-  goNextSheet();
+  updateHud();
 }
 
 function showSheetEvent(ev) {
@@ -682,7 +1021,7 @@ function dismissEventResult() {
   const note = eventResultNote;
   eventResultNote = "";
   hideUpgradeSelect();
-  goNextSheet();
+  hideOverlay();
   if (note) {
     kindHintText = note;
     kindHintLife = 2.8;
@@ -789,11 +1128,12 @@ function hudState() {
     feature: featureLine(),
     hunt: isHuntMode(),
     exitOpen: !!sheet?.exitOpen && !isHuntMode() && !overtime,
-    hint: muteHintLife > 0 ? (isMuted() ? "звук выкл" : "звук вкл") : kindHintText,
+    hint: muteHintLife > 0 ? (isMuted() && !isMusicOn() ? "звук выкл" : "звук вкл") : kindHintText,
     hintLife: muteHintLife > 0 ? muteHintLife : kindHintLife,
     notebook: notebookFlash,
     clock: sheetTimed ? (overtime ? "срок 0:00" : `срок ${formatClock(sheetTimer)}`) : "",
     overtime,
+    alarm: overtime || (sheet?.objective === "survive" && !sheet?.exitOpen),
     heat: run.heat || 0,
     pulse: { ...hudPulse },
     lowLife: (player?.hp ?? 0) === 1,
@@ -1028,7 +1368,7 @@ function tryAdvance() {
     run.pendingHeat = 0;
     run.pendingEvent = true;
   }
-  beginUpgradePick();
+  goNextSheet();
 }
 
 function tryLose() {
@@ -1078,10 +1418,12 @@ function tickDeadline(dt) {
   overtimeWait -= dt;
   if (overtimeWait > 0) return;
   lastHurtCause = "time";
-  const hpLost = hurtPlayer(player, run);
-  spawnBlot(particles, player.x, player.y, "#9a2b2b", 8);
-  shakeCamera(camera, 3);
-  if (hpLost) sfx.hurt();
+  const hit = hurtPlayer(player, run);
+  if (hit === "hurt" || hit === "shield") {
+    spawnBlot(particles, player.x, player.y, "#9a2b2b", 8);
+    shakeCamera(camera, 3);
+  }
+  if (hit === "hurt") sfx.hurt();
   overtimeWait = overtimeInterval(timeRng);
   tryLose();
 }
@@ -1138,7 +1480,7 @@ function togglePause() {
     hidePanels();
     setMenuChrome(false);
     overlayEl.classList.remove("is-defeat");
-    showOverlay("Пауза", `Esc — продолжить · R — с 1-го · M — звук · сид ${runSeed}`);
+    showOverlay("Пауза", `Esc — продолжить · R — с 1-го · M — звук и музыка · сид ${runSeed}`);
     if (pauseNotes) {
       const wpn = getWeapon(run);
       fillBuildBlock(
@@ -1149,6 +1491,7 @@ function togglePause() {
       );
       pauseNotes.classList.remove("hidden");
     }
+    showSoundPanel();
   } else {
     hideOverlay();
   }
@@ -1244,11 +1587,12 @@ function resolveHits(shot) {
 
   if (shotHitsCircle(shot, player.x, player.y, player.radius)) {
     shot.alive = false;
+    const hit = hurtPlayer(player, run);
+    if (hit === "block" || hit === "dead") return;
     lastHurtCause = "laser";
-    const hpLost = hurtPlayer(player, run);
     spawnBlot(particles, player.x, player.y, "#9a2b2b", 8);
     shakeCamera(camera, 3);
-    if (hpLost) sfx.hurt();
+    if (hit === "hurt") sfx.hurt();
     tryLose();
   }
 }
@@ -1279,11 +1623,30 @@ function frame(now) {
   if (input.consumeMute()) {
     toggleMute();
     muteHintLife = 1.4;
+    syncSoundButtons();
   }
   if (kindHintLife > 0) kindHintLife = Math.max(0, kindHintLife - dt);
   if (kindHintLife <= 0 && !muteHintLife) kindHintText = "";
   if (muteHintLife > 0) muteHintLife = Math.max(0, muteHintLife - dt);
   if (notebookFlash > 0) notebookFlash = Math.max(0, notebookFlash - dt);
+
+  if (paperBusy && mode !== "menu") {
+    input.consumePause();
+    input.consumeRestart();
+    input.consumeShoot();
+    input.consumeConfirm();
+    input.consumeChoice();
+    if (sheet && player) {
+      drawFrame(ctx, view, sheet, player, shots, enemies, sheet.exitOpen, null, pickups, {
+        camera,
+        fog,
+        hud: hudState(),
+        crosshair: input.mouse.inside ? { x: input.mouse.x, y: input.mouse.y } : null,
+      });
+    }
+    requestAnimationFrame(frame);
+    return;
+  }
 
   if (mode === "menu") {
     if (input.consumePause()) {
@@ -1475,7 +1838,25 @@ if (eventContinue) {
   eventContinue.addEventListener("click", () => dismissEventResult());
 }
 
+function bindSoundToggle(id, kind) {
+  document.getElementById(id)?.addEventListener("click", () => {
+    unlockAudio();
+    if (kind === "music") setMusicOn(!isMusicOn());
+    else {
+      const next = !isSfxOn();
+      setSfxOn(next);
+      if (next) sfx.mark();
+    }
+    syncSoundButtons();
+  });
+}
+bindSoundToggle("toggle-music", "music");
+bindSoundToggle("toggle-sfx", "sfx");
+bindSoundToggle("opt-music", "music");
+bindSoundToggle("opt-sfx", "sfx");
 document.getElementById("menu-play")?.addEventListener("click", () => showMenu("seed"));
+document.getElementById("menu-options")?.addEventListener("click", () => showMenu("options"));
+document.getElementById("options-back")?.addEventListener("click", () => showMenu("root"));
 document.getElementById("seed-go")?.addEventListener("click", () => beginFromMenu());
 document.getElementById("seed-back")?.addEventListener("click", () => showMenu("root"));
 seedInput?.addEventListener("input", () => refreshSeedPreview());

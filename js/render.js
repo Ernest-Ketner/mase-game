@@ -166,6 +166,135 @@ function segInView(wall, vis) {
   return right >= vis.left && left <= vis.right && bottom >= vis.top && top <= vis.bottom;
 }
 
+function blotRand(n) {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function blotOutline(blob, ox, oy, scale, seed) {
+  const steps = 26;
+  const points = [];
+  for (let i = 0; i < steps; i++) {
+    const ang = (i / steps) * Math.PI * 2;
+    const dx = Math.cos(ang);
+    const dy = Math.sin(ang);
+    let reach = CELL * 0.45;
+    for (const cell of blob) {
+      const px = MARGIN + cell.c * CELL + CELL * 0.5 - ox;
+      const py = MARGIN + cell.r * CELL + CELL * 0.5 - oy;
+      const along = px * dx + py * dy;
+      const side = Math.abs(-px * dy + py * dx);
+      if (along <= 0 || side > CELL * 1.15) continue;
+      reach = Math.max(reach, along + CELL * (0.78 - side / (CELL * 4)));
+    }
+    const wobble =
+      Math.sin(ang * 3 + seed) * CELL * 0.28 +
+      Math.sin(ang * 5 + seed * 1.7) * CELL * 0.16 +
+      Math.sin(ang * 8 + seed * 0.4) * CELL * 0.07;
+    const radius = Math.max(CELL * 0.55, Math.max(reach * 0.9, reach + wobble) * scale);
+    points.push({ x: ox + dx * radius, y: oy + dy * radius });
+  }
+  return points;
+}
+
+function traceSmooth(ctx, points) {
+  const n = points.length;
+  const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const start = mid(points[n - 1], points[0]);
+  ctx.moveTo(start.x, start.y);
+  for (let i = 0; i < n; i++) {
+    const p = points[i];
+    const next = mid(p, points[(i + 1) % n]);
+    ctx.quadraticCurveTo(p.x, p.y, next.x, next.y);
+  }
+  ctx.closePath();
+}
+
+function drawBlots(ctx, blots, vis) {
+  if (!blots) return;
+  for (const blob of blots) {
+    if (!blob.length) continue;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let sx = 0;
+    let sy = 0;
+    for (const cell of blob) {
+      const x = MARGIN + cell.c * CELL;
+      const y = MARGIN + cell.r * CELL;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + CELL);
+      maxY = Math.max(maxY, y + CELL);
+      sx += x + CELL * 0.5;
+      sy += y + CELL * 0.5;
+    }
+    const pad = CELL * 2.2;
+    if (vis && (maxX + pad < vis.left || maxY + pad < vis.top || minX - pad > vis.right || minY - pad > vis.bottom)) {
+      continue;
+    }
+    const ox = sx / blob.length;
+    const oy = sy / blob.length;
+    const seed = blob[0].c * 1.7 + blob[0].r * 2.3;
+    ctx.fillStyle = "rgba(22, 30, 52, 0.28)";
+    ctx.beginPath();
+    traceSmooth(ctx, blotOutline(blob, ox, oy, 1.08, seed));
+    ctx.fill();
+    ctx.fillStyle = "rgba(14, 20, 38, 0.94)";
+    ctx.beginPath();
+    traceSmooth(ctx, blotOutline(blob, ox, oy, 1, seed));
+    ctx.fill();
+    ctx.fillStyle = "rgba(6, 10, 22, 0.55)";
+    ctx.beginPath();
+    traceSmooth(ctx, blotOutline(blob, ox + 1.5, oy + 2, 0.62, seed + 1));
+    ctx.fill();
+    for (let i = 0; i < 3; i++) {
+      const ang = blotRand(seed + i * 4.1) * Math.PI * 2;
+      const dist = CELL * (1.15 + blotRand(seed + i + 9) * 1.4);
+      const rx = CELL * (0.16 + blotRand(seed + i + 2) * 0.22);
+      const ry = rx * (0.55 + blotRand(seed + i + 3) * 0.35);
+      ctx.save();
+      ctx.translate(ox + Math.cos(ang) * dist, oy + Math.sin(ang) * dist);
+      ctx.rotate(ang);
+      ctx.fillStyle = i === 0 ? "rgba(14, 20, 38, 0.9)" : "rgba(18, 26, 48, 0.75)";
+      ctx.beginPath();
+      ctx.ellipse(0, 0, i === 0 ? rx * 1.8 : rx, i === 0 ? ry * 0.45 : ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+function drawSpecks(ctx, specks, vis, fog) {
+  if (!specks) return;
+  ctx.save();
+  ctx.lineCap = "round";
+  for (const speck of specks) {
+    if (fog && !cellExplored(fog, speck.c, speck.r)) continue;
+    if (
+      vis &&
+      (speck.x > vis.right || speck.y > vis.bottom || speck.x < vis.left || speck.y < vis.top)
+    ) {
+      continue;
+    }
+    if (speck.kind === "scratch") {
+      ctx.strokeStyle = "rgba(27, 51, 88, 0.45)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(speck.x - Math.cos(speck.spin) * speck.size, speck.y - Math.sin(speck.spin) * speck.size);
+      ctx.lineTo(speck.x + Math.cos(speck.spin) * speck.size, speck.y + Math.sin(speck.spin) * speck.size);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = "rgba(27, 40, 72, 0.55)";
+      ctx.beginPath();
+      ctx.ellipse(speck.x, speck.y, speck.size * 0.55, speck.size * 0.4, speck.spin, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
 function drawTarget(ctx, target, pulse = false) {
   ctx.save();
   ctx.translate(target.x, target.y);
@@ -640,7 +769,22 @@ function drawForceField(ctx, x, y) {
 
 function drawPlayer(ctx, player) {
   if ((player.shieldCharges ?? 0) > 0) drawForceField(ctx, player.x, player.y);
-  if (player.invuln > 0 && Math.floor(player.invuln * 12) % 2 === 0) return;
+  if (player.invuln > 0) {
+    const blink = Math.floor(player.invuln * 10) % 2 === 0;
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    ctx.strokeStyle = blink ? "rgba(154, 43, 43, 0.85)" : "rgba(154, 43, 43, 0.35)";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 11, 13, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    if (blink) ctx.save();
+    if (blink) ctx.globalAlpha = 0.45;
+    drawSoldier(ctx, player, blink ? "#9a2b2b" : PEN, "idle", "player");
+    if (blink) ctx.restore();
+    return;
+  }
   drawSoldier(ctx, player, PEN, "idle", "player");
 }
 
@@ -1114,7 +1258,9 @@ export function drawFrame(
   drawSpawnDens(ctx, level.spawnDens, performance.now() / 1000, fx.fog, fx.huntFlash || 0);
   drawExitStamps(ctx, level, fx.hud?.heat || 0);
   drawWallInk(ctx, level.walls, vis, fx.fog);
+  drawSpecks(ctx, level.specks, vis, fx.fog);
   if (fx.fog) drawFogOverlay(ctx, fx.fog, vis);
+  drawBlots(ctx, level.blots, vis);
   const seen = (x, y) => !fx.fog || fx.fog.worldVisible(x, y);
   for (const target of level.targets) {
     if (seen(target.x, target.y)) drawTarget(ctx, target, fx.targetPulse);
@@ -1146,6 +1292,17 @@ export function drawFrame(
     drawMuzzleFlash(ctx, player, fx.muzzleFlash || 0);
   }
   ctx.restore();
+  drawAlarmWash(ctx, view, fx.hud?.alarm);
   drawHud(ctx, view, fx.hud);
   drawCrosshair(ctx, fx.crosshair);
+}
+
+function drawAlarmWash(ctx, view, on) {
+  if (!on) return;
+  const t = performance.now() / 1000;
+  const pulse = Math.pow(Math.max(0, Math.sin(t * Math.PI * 1.7)), 2);
+  ctx.save();
+  ctx.fillStyle = `rgba(154, 43, 43, ${0.03 + pulse * 0.14})`;
+  ctx.fillRect(0, 0, view.width, view.height);
+  ctx.restore();
 }

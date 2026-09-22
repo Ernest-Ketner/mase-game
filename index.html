@@ -17,12 +17,14 @@
     <div class="desk">
       <header class="hint">
         <p class="controls">
-          WASD — ходить · ЛКМ / пробел — выстрел (можно зажать) · M — звук · Esc — пауза · R — сначала, тот же сид
+          WASD — ходить · ЛКМ / пробел — выстрел (можно зажать) · M — звук и музыка · Esc — пауза · R — сначала, тот же сид
         </p>
         <p class="status" id="status">Выход с 4 мишеней · тихо — происшествие · жар копится</p>
       </header>
-      <div class="paper-wrap">
+      <div class="paper-wrap" id="paper">
         <canvas id="game" width="380" height="460"></canvas>
+        <canvas id="fold" width="380" height="460" aria-hidden="true"></canvas>
+        <div class="paper-crease" aria-hidden="true"></div>
         <div id="overlay" class="win is-menu is-root-menu" aria-live="polite">
           <div class="menu-fx" aria-hidden="true">
             <span class="menu-fx-blot menu-fx-blot-a"></span>
@@ -38,6 +40,10 @@
             <p class="win-title" id="overlay-title">Лабиринт</p>
           </div>
           <p class="win-sub" id="overlay-sub">Играть — новый лист 1 · Enter</p>
+          <div id="sound-panel" class="sound-panel hidden">
+            <button type="button" class="menu-btn sound-btn" id="toggle-music">Музыка: вкл</button>
+            <button type="button" class="menu-btn sound-btn" id="toggle-sfx">Звуки: вкл</button>
+          </div>
           <p id="pause-notes" class="pause-notes hidden"></p>
           <p id="event-body" class="event-body hidden"></p>
           <button type="button" class="menu-btn hidden" id="event-continue">Дальше</button>
@@ -46,6 +52,12 @@
             <button type="button" class="menu-btn" id="menu-controls">Управление</button>
             <button type="button" class="menu-btn" id="menu-about">Об игре</button>
             <button type="button" class="menu-btn" id="menu-record">Рекорд</button>
+            <button type="button" class="menu-btn" id="menu-options">Опции</button>
+          </div>
+          <div id="options-panel" class="menu-panel hidden">
+            <button type="button" class="menu-btn sound-btn" id="opt-music">Музыка: вкл</button>
+            <button type="button" class="menu-btn sound-btn" id="opt-sfx">Звуки: вкл</button>
+            <button type="button" class="menu-btn" id="options-back">Назад</button>
           </div>
           <div id="seed-panel" class="menu-panel hidden">
             <label class="seed-field" for="seed-input">Сид</label>

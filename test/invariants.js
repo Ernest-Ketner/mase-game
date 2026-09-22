@@ -82,12 +82,24 @@ function checkLevel(seed, tagId = null) {
   assert(floors > 80, `seed ${label}: too few floors ${floors}`);
   assert(blocks / floors >= 0.92, `seed ${label}: floor blocks ${blocks}/${floors}`);
   assert(leaves === 0, `seed ${label}: dead ends ${leaves}`);
+  const blobs = level.blots || [];
+  assert(blobs.length >= 2, `seed ${label}: blot count ${blobs.length}`);
+  for (const blob of blobs) {
+    assert(blob.length >= 8 && blob.length <= 16, `seed ${label}: blot size ${blob.length}`);
+  }
+  assert(isFloor(level.grid, level.start.c, level.start.r), `seed ${label}: start buried in ink`);
   if (tagId === "arena") {
     assert(solidRect(level.grid, 10, 14, 21, 25), `seed ${label}: arena plaza missing`);
   }
   if (tagId === "a1") {
     assert(level.cols === 132 && level.rows === 164, `seed ${label}: A1 size ${level.cols}×${level.rows}`);
     assert(level.grid.length === 164 && level.grid[0].length === 132, `seed ${label}: A1 grid mismatch`);
+    assert(isFloor(level.grid, 66, 84), `seed ${label}: A1 plaza missing`);
+    assert((level.spawnDens?.length || 0) >= 12, `seed ${label}: A1 dens ${level.spawnDens?.length || 0}`);
+    assert(
+      level.spawnDens.some((den) => den.kind === "camp"),
+      `seed ${label}: A1 camps missing`,
+    );
   }
   if (tagId === "margin") {
     assert(isFloor(level.grid, 3, 1), `seed ${label}: margin ring missing`);

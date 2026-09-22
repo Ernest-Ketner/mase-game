@@ -41,7 +41,7 @@ export const UPGRADE_CATALOG = [
   { id: "dodge_nerf", title: "Слепой шаг", desc: "Враги чаще не успевают шагнуть от луча", maxStacks: 2, rarity: "common", syn: "any", effect: { add: { dodgeFail: 0.2 } } },
   { id: "hunt_calm", title: "Хладнокровие", desc: "В режиме охоты враги не ускоряются и не стреляют чаще", rarity: "ink", syn: "any", effect: { set: { huntCalm: true } } },
   { id: "sight", title: "Зоркость", desc: "Дальше видишь в тумане (+3 клетки)", maxStacks: 2, rarity: "common", syn: "any", effect: { add: { playerVisionBonus: 3 } } },
-  { id: "hearing", title: "Слух", desc: "Слышишь сквозь стены дальше (+3 клетки)", maxStacks: 2, rarity: "common", syn: "any", effect: { add: { playerHearBonus: 3 } } },
+  { id: "hearing", title: "Слух", desc: "Слышишь сквозь стены дальше. Десять раз — весь обычный лист", maxStacks: 12, rarity: "common", syn: "any", effect: { add: { playerHearBonus: (Math.hypot(32, 40) - 5) / 10 } } },
   { id: "bounce_seek", title: "Ищейка", desc: "После отскока луч чуть доворачивает к ближайшему врагу", rarity: "ink", syn: "bounce", effect: { set: { bounceSeek: true } } },
   { id: "bounce_split", title: "Чернильный скол", desc: "Шанс второго короткого луча в точке рикошета", rarity: "ink", syn: "bounce", effect: { set: { bounceSplit: true } } },
   { id: "smg_burst", title: "Очередь", desc: "Автомат: 3 луча, расход 2 патрона", rarity: "ink", syn: "smg", effect: { set: { smgBurst: true } } },

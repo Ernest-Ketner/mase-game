@@ -1,7 +1,9 @@
-import { CELL } from "./maze.js";
+import { CELL, worldToCell } from "./maze.js";
 import { spawnEnemy, enemyHp, pickSpawnKind, isStrongKind, escortCount } from "./enemy.js";
 
 export const MAX_ALIVE = 10;
+const A1_ALIVE = 16;
+const A1_NEAR = 34;
 const PORTAL_CHARGE_TIME = 0.85;
 const PORTAL_IDLE_SCALE = 0.4;
 const PORTAL_READY_SCALE = 1;
@@ -32,6 +34,14 @@ export function wavePhase(hits) {
 
 function aliveCount(enemies) {
   return enemies.filter((e) => e.alive).length;
+}
+
+function isA1(sheet) {
+  return sheet?.tag === "a1";
+}
+
+function aliveLimit(world) {
+  return isA1(world?.sheet) ? A1_ALIVE : MAX_ALIVE;
 }
 
 function hasKind(enemies, pending, kind) {
@@ -96,20 +106,32 @@ function densForPick(sheet, pending, enemies) {
   return pool;
 }
 
-export function pickSpawnDen(sheet, pending, enemies, rng = Math.random) {
-  const pool = densForPick(sheet, pending, enemies);
+function preferNearDens(pool, player, rng) {
+  if (!player || pool.length < 2) return pool;
+  const here = worldToCell(player.x, player.y);
+  const dist = (den) => Math.hypot(den.portal.c - here.c, den.portal.r - here.r);
+  const near = pool.filter((den) => dist(den) <= A1_NEAR);
+  if (near.length > 0) return near;
+  const mid = pool.filter((den) => dist(den) <= A1_NEAR * 1.8);
+  if (mid.length > 0 && rng() < 0.75) return mid;
+  return pool;
+}
+
+export function pickSpawnDen(sheet, pending, enemies, rng = Math.random, player = null) {
+  let pool = densForPick(sheet, pending, enemies);
   if (pool.length === 0) return null;
+  if (isA1(sheet)) pool = preferNearDens(pool, player, rng);
   return pool[Math.floor(rng() * pool.length)];
 }
 
 export function queueSpawn(spawner, world, kind = "grunt", den = null, force = false) {
   const { enemies, sheet } = world;
-  if (!force && aliveCount(enemies) + spawner.pending.length >= MAX_ALIVE) return false;
+  if (!force && aliveCount(enemies) + spawner.pending.length >= aliveLimit(world)) return false;
   if (kind === "warden" && hasKind(enemies, spawner.pending, "warden")) return false;
   if (kind === "champion" && championQueued(enemies, spawner.pending) >= championCap(world.levelNum, heatLevel(world))) {
     return false;
   }
-  const nest = den || pickSpawnDen(sheet, spawner.pending, enemies);
+  const nest = den || pickSpawnDen(sheet, spawner.pending, enemies, Math.random, world.player);
   if (!nest) return false;
   const job = {
     den: nest,
@@ -124,8 +146,9 @@ export function queueSpawn(spawner, world, kind = "grunt", den = null, force = f
 export function queuePack(spawner, world, kind = "grunt") {
   const escorts = escortCount(kind);
   const used = aliveCount(world.enemies) + spawner.pending.length;
-  if (used >= MAX_ALIVE && !isStrongKind(kind)) return false;
-  if (isStrongKind(kind) && used + 1 + Math.min(1, escorts) > MAX_ALIVE + 2) return false;
+  const limit = aliveLimit(world);
+  if (used >= limit && !isStrongKind(kind)) return false;
+  if (isStrongKind(kind) && used + 1 + Math.min(1, escorts) > limit + 2) return false;
   const den = pickSpawnDen(world.sheet, spawner.pending, world.enemies);
   if (!queueSpawn(spawner, world, kind, den)) return false;
   const job = spawner.pending[spawner.pending.length - 1];
@@ -137,8 +160,60 @@ export function queuePack(spawner, world, kind = "grunt") {
   return true;
 }
 
+function seedA1(spawner, world) {
+  const start = world.sheet?.start;
+  const dens = (world.sheet?.spawnDens || []).slice();
+  if (!start || dens.length === 0) return;
+  const distOf = (den) => Math.abs(den.portal.c - start.c) + Math.abs(den.portal.r - start.r);
+  dens.sort((a, b) => distOf(a) - distOf(b));
+  const chosen = [];
+  const close = dens.find((den) => distOf(den) >= 10 && distOf(den) <= 24);
+  if (close) chosen.push(close);
+  for (const den of dens) {
+    if (chosen.length >= 5) break;
+    if (distOf(den) < 28) continue;
+    if (chosen.some((have) => Math.hypot(have.portal.c - den.portal.c, have.portal.r - den.portal.r) < 20)) {
+      continue;
+    }
+    chosen.push(den);
+  }
+  chosen.forEach((den, index) => {
+    const kind = index === 2 ? pickSpawnKind(world.levelNum) : "grunt";
+    if (!queueSpawn(spawner, world, kind, den, true)) return;
+    den.ambushed = true;
+    if (isStrongKind(kind)) queueSpawn(spawner, world, "grunt", den, true);
+  });
+}
+
+function tickA1Ambush(spawner, world) {
+  const player = world.player;
+  if (!isA1(world.sheet) || !player) return;
+  const here = worldToCell(player.x, player.y);
+  const used = aliveCount(world.enemies) + spawner.pending.length;
+  if (used >= aliveLimit(world)) return;
+  for (const den of world.sheet.spawnDens || []) {
+    if (den.ambushed || !den.portal) continue;
+    const d = Math.hypot(den.portal.c - here.c, den.portal.r - here.r);
+    if (d < 5 || d > 12) continue;
+    if (Math.random() < 0.35) {
+      den.ambushed = true;
+      continue;
+    }
+    const kind = Math.random() < 0.22 ? pickSpawnKind(world.levelNum) : "grunt";
+    if (!queueSpawn(spawner, world, kind, den)) continue;
+    den.ambushed = true;
+    if (isStrongKind(kind)) queueSpawn(spawner, world, "grunt", den, true);
+    break;
+  }
+}
+
 export function beginSheetSpawns(spawner, world) {
   resetSpawner(spawner);
+  if (isA1(world.sheet)) {
+    seedA1(spawner, world);
+    spawner.timer = 6 * heatPace(heatLevel(world));
+    return;
+  }
   queuePack(spawner, world, "grunt");
   const pace = heatPace(heatLevel(world));
   if (world.levelNum === 1) {
@@ -203,6 +278,7 @@ export function tickSpawner(spawner, dt, world) {
     spawner.championEvent = Math.max(0, spawner.championEvent - dt);
   }
   updatePortalCharges(spawner, world, dt);
+  tickA1Ambush(spawner, world);
   const hits = world.hitCount();
   const phase = wavePhase(hits);
   const levelNum = world.levelNum;
@@ -237,13 +313,14 @@ export function tickSpawner(spawner, dt, world) {
   if (spawner.timer > 0) return phase;
 
   const used = aliveCount(world.enemies) + spawner.pending.length;
-  const cap = (phase === "scout" ? 4 : phase === "pressure" ? 7 : MAX_ALIVE) + 2 * heat;
+  let cap = (phase === "scout" ? 4 : phase === "pressure" ? 7 : MAX_ALIVE) + 2 * heat;
+  if (isA1(world.sheet)) cap = Math.max(cap, phase === "scout" ? 8 : 14);
   if (used >= cap) {
     spawner.timer = 2.2;
     return phase;
   }
 
-  const pace = heatPace(heat);
+  const pace = heatPace(heat) * (isA1(world.sheet) ? 0.62 : 1);
   if (phase === "scout") {
     if (levelNum === 1) queueSpawn(spawner, world, "grunt");
     else queuePack(spawner, world, "grunt");

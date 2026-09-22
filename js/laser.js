@@ -288,10 +288,17 @@ export function splitShot(shot) {
   );
 }
 
+function rememberSweep(shot) {
+  const last = shot.sweep[shot.sweep.length - 1];
+  if (last && last.x === shot.x && last.y === shot.y) return;
+  shot.sweep.push({ x: shot.x, y: shot.y });
+}
+
 export function updateShot(shot, walls, bounds, dt) {
   if (!shot.alive) return;
   shot.bounced = false;
   shot.bouncePos = null;
+  shot.sweep = [{ x: shot.x, y: shot.y }];
   let remaining = shot.speed * dt;
   const maxBounces = shot.maxBounces ?? MAX_BOUNCES;
   while (remaining > 0 && shot.alive) {
@@ -299,11 +306,13 @@ export function updateShot(shot, walls, bounds, dt) {
     if (!hit || hit.t > remaining + 0.05) {
       shot.x += shot.dx * remaining;
       shot.y += shot.dy * remaining;
+      rememberSweep(shot);
       remaining = 0;
       break;
     }
     shot.x = hit.x;
     shot.y = hit.y;
+    rememberSweep(shot);
     remaining -= hit.t;
     if (shot.bounces >= maxBounces) {
       shot.alive = false;
@@ -317,6 +326,7 @@ export function updateShot(shot, walls, bounds, dt) {
     shot.lastWallId = hit.wall.id;
     shot.x += shot.dx * 0.08;
     shot.y += shot.dy * 0.08;
+    rememberSweep(shot);
   }
 
   pushTrail(shot);
@@ -332,7 +342,14 @@ export function updateShot(shot, walls, bounds, dt) {
 }
 
 export function shotHitsCircle(shot, cx, cy, radius) {
-  return Math.hypot(shot.x - cx, shot.y - cy) <= shot.radius + radius;
+  const reach = (shot.radius ?? 5) + radius;
+  const pts = shot.sweep?.length ? shot.sweep : [{ x: shot.x, y: shot.y }];
+  if (pts.length === 1) return Math.hypot(pts[0].x - cx, pts[0].y - cy) <= reach;
+  for (let i = 1; i < pts.length; i++) {
+    const p = closestPointOnSegment(cx, cy, pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
+    if (Math.hypot(p.x - cx, p.y - cy) <= reach) return true;
+  }
+  return Math.hypot(shot.x - cx, shot.y - cy) <= reach;
 }
 
 export function remainingPath(shot, walls) {

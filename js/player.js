@@ -69,7 +69,7 @@ export function circleHitsGrid(x, y, radius, grid) {
     if (r < 0 || r >= ROWS) continue;
     for (let c = here.c - NEAR_PAD; c <= here.c + NEAR_PAD; c++) {
       if (c < 0 || c >= COLS) continue;
-      if (grid[r][c] !== "wall") continue;
+      if (grid[r][c] !== "wall" && grid[r][c] !== "blot") continue;
       if (pushFromTile(x, y, radius, c, r).pen > 0) return true;
     }
   }
@@ -87,7 +87,7 @@ function depenetrateGrid(x, y, radius, grid) {
       if (r < 0 || r >= ROWS) continue;
       for (let c = here.c - NEAR_PAD; c <= here.c + NEAR_PAD; c++) {
         if (c < 0 || c >= COLS) continue;
-        if (grid[r][c] !== "wall") continue;
+        if (grid[r][c] !== "wall" && grid[r][c] !== "blot") continue;
         const hit = pushFromTile(x, y, lim, c, r);
         if (hit.pen > maxPen) {
           maxPen = hit.pen;
@@ -271,17 +271,18 @@ export function updatePlayer(player, input, walls, dt, locked, grid = null, fiel
 }
 
 export function hurtPlayer(player, run = null) {
-  if (player.invuln > 0 || player.hp <= 0) return false;
-  const invulnTime = run?.mods?.invulnTime ?? 1;
+  if (!player || player.hp <= 0) return "dead";
+  if (player.invuln > 0) return "block";
+  const invulnTime = Math.max(0.85, Number(run?.mods?.invulnTime) || 1);
   if ((player.shieldCharges ?? 0) > 0) {
     player.shieldCharges -= 1;
     if (run) run.mods.shieldCharges = player.shieldCharges;
     player.invuln = invulnTime;
-    return false;
+    return "shield";
   }
   player.hp -= 1;
   player.invuln = invulnTime;
-  return true;
+  return "hurt";
 }
 
 export function grantInvuln(player, seconds) {

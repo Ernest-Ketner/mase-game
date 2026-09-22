@@ -1,7 +1,7 @@
 import {
   CELL,
   cellCenter,
-  openNeighbors,
+  openNeighbors8,
   worldToCell,
   bfsNextCell,
   cellReachable,
@@ -334,13 +334,13 @@ function rollTactic(enemy, pack) {
 
 function nextStepToward(grid, enemy, goal) {
   const here = worldToCell(enemy.x, enemy.y);
-  return bfsNextCell(grid, here, goal);
+  return bfsNextCell(grid, here, goal, openNeighbors8);
 }
 
 function pickZigzagStep(grid, enemy, player) {
   const here = worldToCell(enemy.x, enemy.y);
   const goal = worldToCell(player.x, player.y);
-  const options = openNeighbors(grid, here.c, here.r);
+  const options = openNeighbors8(grid, here.c, here.r);
   if (options.length === 0) return null;
   const vx = Math.sign(goal.c - here.c);
   const vy = Math.sign(goal.r - here.r);
@@ -372,7 +372,7 @@ function flankCell(grid, enemy, player) {
     const c = here.c + off.c;
     const r = here.r + off.r;
     if (isFloor(grid, c, r)) return { c, r };
-    const near = openNeighbors(grid, Math.max(0, c), Math.max(0, r));
+    const near = openNeighbors8(grid, Math.max(0, c), Math.max(0, r));
     if (near.length > 0) return near[0];
   }
   return here;
@@ -403,7 +403,7 @@ function chooseChaseStep(grid, enemy, player, pack) {
 
 function sidestepCell(grid, enemy, path) {
   const here = worldToCell(enemy.x, enemy.y);
-  const options = openNeighbors(grid, here.c, here.r);
+  const options = openNeighbors8(grid, here.c, here.r);
   if (options.length === 0) return null;
   const safe = options.filter((cell) => {
     const pos = cellCenter(cell.c, cell.r);
@@ -467,7 +467,7 @@ function standoffRange(enemy) {
 
 function stepAwayFrom(grid, enemy, player) {
   const here = worldToCell(enemy.x, enemy.y);
-  const options = openNeighbors(grid, here.c, here.r);
+  const options = openNeighbors8(grid, here.c, here.r);
   if (options.length === 0) return null;
   const pc = worldToCell(player.x, player.y);
   const hereD = Math.abs(here.c - pc.c) + Math.abs(here.r - pc.r);
@@ -523,7 +523,7 @@ function tryDodge(enemy, grid, walls, shots, dodgeFail = 0) {
 
 function pickEscapeCell(grid, enemy) {
   const here = worldToCell(enemy.x, enemy.y);
-  const options = openNeighbors(grid, here.c, here.r);
+  const options = openNeighbors8(grid, here.c, here.r);
   if (options.length === 0) return null;
   let pool = options;
   if (enemy.lastCell && options.length > 1) {
