@@ -21,6 +21,7 @@ export function createRunState() {
     pendingHeat: 0,
     pendingEvent: false,
     stacks: {},
+    lost: [],
     mods: {
       laserSpeedMult: 1,
       cooldownMult: 1,

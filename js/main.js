@@ -30,7 +30,7 @@ import { createInput } from "./input.js";
 import { setupCanvas, drawFrame } from "./render.js";
 import { createCamera, snapCamera, updateCamera, screenToWorld, viewSize, shakeCamera } from "./camera.js";
 import { updateEnemies, hurtEnemy, kindHint, stunEnemy } from "./enemy.js";
-import { createRunState, applyPlayerStats, resetLevelShield, usesAmmo, syncMoveSpeed, NOTEBOOK_GOAL, SHEET_AMMO_GRANT } from "./run.js";
+import { createRunState, applyPlayerStats, resetLevelShield, usesAmmo, syncMoveSpeed, applyWeaponSwap, weaponDef, NOTEBOOK_GOAL, SHEET_AMMO_GRANT } from "./run.js";
 import {
   pickOffers,
   applyUpgrade,
@@ -40,7 +40,7 @@ import {
   ammoDropChance,
   offerTitle,
   listTaken,
-  listTakenLines,
+  listBuildLines,
 } from "./upgrades.js";
 import {
   createFog,
@@ -58,7 +58,7 @@ import {
   spawnMenuGrunt,
   wavePhase,
 } from "./spawn.js";
-import { parseSeedFromUrl, randomSeed, sheetRng } from "./seed.js";
+import { parseSeedFromUrl, randomSeed, sheetRng, starterWeaponId } from "./seed.js";
 import { bindAudioUnlock, sfx, toggleMute, isMuted } from "./audio.js";
 import { createFx, resetFx, spawnBlot, spawnDamage, updateFx } from "./fx.js";
 import { pickSheetEvent } from "./events.js";
@@ -83,6 +83,9 @@ const upgradeCards = [
   document.getElementById("upgrade-2"),
 ];
 const menuPanel = document.getElementById("menu-panel");
+const seedPanel = document.getElementById("seed-panel");
+const seedInput = document.getElementById("seed-input");
+const seedWeapon = document.getElementById("seed-weapon");
 const menuPage = document.getElementById("menu-page");
 const menuPageText = document.getElementById("menu-page-text");
 const deathPanel = document.getElementById("death-panel");
@@ -167,6 +170,7 @@ function setMenuChrome(on, root = false) {
 function hidePanels() {
   if (upgradePanel) upgradePanel.classList.add("hidden");
   if (menuPanel) menuPanel.classList.add("hidden");
+  if (seedPanel) seedPanel.classList.add("hidden");
   if (menuPage) menuPage.classList.add("hidden");
   if (deathPanel) deathPanel.classList.add("hidden");
   if (pauseNotes) pauseNotes.classList.add("hidden");
@@ -328,11 +332,21 @@ function showMenu(screen = "root") {
     if (menuPanel) menuPanel.classList.remove("hidden");
     return;
   }
+  if (screen === "seed") {
+    showOverlay("Сид", "пустое поле — случайный · Enter — начать");
+    if (seedPanel) seedPanel.classList.remove("hidden");
+    if (seedInput) {
+      seedInput.value = "";
+      seedInput.focus();
+    }
+    refreshSeedPreview();
+    return;
+  }
   if (menuPage) menuPage.classList.remove("hidden");
   if (screen === "controls") {
     showOverlay("Управление", "");
     menuPageText.textContent =
-      "WASD или стрелки — ходить.\nЛКМ или пробел — выстрел, можно зажать.\nM — выключить или включить звук.\nНа бегу лучи разлетаются шире, чем стоя.\nПрицел (пунктир траектории) берётся как апгрейд.\nEsc — пауза (в меню — назад).\nR — начать забег заново с того же сида.";
+      "WASD или стрелки — ходить.\nЛКМ или пробел — выстрел, можно зажать.\nЛазер греется и после очереди стынет.\nПосле «Играть» можно вписать сид. Пустое поле — случайный. На одном сиде всегда одно стартовое оружие.\nM — выключить или включить звук.\nНа бегу лучи разлетаются шире, чем стоя.\nПрицел (пунктир траектории) берётся как апгрейд.\nEsc — пауза (в меню — назад).\nR — начать забег заново с того же сида.";
   } else if (screen === "about") {
     showOverlay("Об игре", "");
     menuPageText.textContent =
@@ -355,6 +369,30 @@ function startGame() {
     showMenu("root");
     if (overlaySub) overlaySub.textContent = `ошибка: ${err?.message || err}`;
   }
+}
+
+function typedSeed() {
+  const raw = seedInput?.value.trim() ?? "";
+  if (!raw) return null;
+  return parseSeedFromUrl(`?seed=${encodeURIComponent(raw)}`);
+}
+
+function refreshSeedPreview() {
+  if (!seedWeapon) return;
+  const typed = typedSeed();
+  if (typed == null) {
+    seedWeapon.textContent = "пустое поле — случайный сид";
+    return;
+  }
+  const label = weaponDef(starterWeaponId(typed)).label;
+  seedWeapon.textContent = `старт: ${label}`;
+}
+
+function beginFromMenu() {
+  const typed = typedSeed();
+  runSeed = typed == null ? randomSeed() : typed;
+  syncSeedUrl(runSeed);
+  startGame();
 }
 
 function syncSeedUrl(seed) {
@@ -470,6 +508,7 @@ function restartFromFirst() {
   mode = "play";
   levelNum = 1;
   run = createRunState();
+  applyWeaponSwap(run, starterWeaponId(runSeed));
   notebookFlash = 0;
   loadSheet(false);
 }
@@ -640,6 +679,7 @@ function skipShop() {
 
 function gunLabel() {
   const wpn = getWeapon(run);
+  if (run.weaponId === "wpn_laser" && weapon?.overheated) return "Лазер перегрев";
   let gunText = weapon.cooldown > 0 ? `${wpn.label} ${weapon.cooldown.toFixed(1)}с` : `${wpn.label} готов`;
   if (usesAmmo(run)) gunText += ` · ${run.ammo}/${run.ammoMax}`;
   return gunText;
@@ -662,6 +702,8 @@ function hudState() {
     hp: player?.hp ?? 0,
     maxHp: player?.maxHp ?? 3,
     gun: gunLabel(),
+    laserHeat: run.weaponId === "wpn_laser" ? weapon?.heat || 0 : null,
+    laserHot: run.weaponId === "wpn_laser" && !!weapon?.overheated,
     marks: `метки ${hit}/${total}`,
     bank: `банк ${run.targetBank}`,
     tag: sheetTagLine(),
@@ -708,12 +750,22 @@ function pauseSheetText() {
     lines.push("дальше тетради — срок на каждом листе и короче");
   }
   lines.push("шлюзы снизу: тихо — происшествие, жар — сложнее (серия копится)");
-  const wpn = getWeapon(run);
-  lines.push("");
-  lines.push(`оружие: ${wpn.label}`);
-  const taken = listTakenLines(run);
-  lines.push(taken.length ? taken.join("\n") : "прокачек пока нет");
-  return lines.join("\n");
+  return lines;
+}
+
+function fillBuildBlock(el, headLines, buildLines, emptyText, tailLines = []) {
+  if (!el) return;
+  el.replaceChildren();
+  const add = (text, lost = false) => {
+    const line = document.createElement("span");
+    line.className = lost ? "build-line build-lost" : "build-line";
+    line.textContent = text;
+    el.append(line);
+  };
+  for (const text of headLines) add(text);
+  if (buildLines.length === 0) add(emptyText);
+  else for (const row of buildLines) add(row.text, row.lost);
+  for (const text of tailLines) add(text);
 }
 
 function updateHud() {
@@ -842,20 +894,15 @@ function tryLose() {
   overlayEl.classList.add("is-defeat");
   const cause = lastHurtCause === "time" ? "Время вышло" : "Попал под лазер";
   showOverlay("Поражение", `${cause} · лист ${levelNum} · рекорд ${bestSheet()}`);
-  if (deathBuild) deathBuild.textContent = buildRecap();
+  if (deathBuild) fillBuildBlock(
+    deathBuild,
+    [`оружие: ${getWeapon(run).label}`],
+    listBuildLines(run),
+    "без апгрейдов",
+    [`лист ${levelNum} · сид ${runSeed}`],
+  );
   if (deathPanel) deathPanel.classList.remove("hidden");
   updateHud();
-}
-
-function buildRecap() {
-  const wpn = getWeapon(run);
-  const taken = listTaken(run);
-  const lines = [
-    `оружие: ${wpn.label}`,
-    taken.length > 0 ? taken.join(" · ") : "без апгрейдов",
-    `лист ${levelNum} · сид ${runSeed}`,
-  ];
-  return lines.join("\n");
 }
 
 function tickDeadline(dt) {
@@ -929,7 +976,13 @@ function togglePause() {
     overlayEl.classList.remove("is-defeat");
     showOverlay("Пауза", `Esc — продолжить · R — с 1-го · M — звук · сид ${runSeed}`);
     if (pauseNotes) {
-      pauseNotes.textContent = pauseSheetText();
+      const wpn = getWeapon(run);
+      fillBuildBlock(
+        pauseNotes,
+        [...pauseSheetText(), "", `оружие: ${wpn.label}`],
+        listBuildLines(run),
+        "прокачек пока нет",
+      );
       pauseNotes.classList.remove("hidden");
     }
   } else {
@@ -1082,12 +1135,9 @@ function frame(now) {
     if (input.consumePause()) {
       if (menuScreen !== "root") showMenu("root");
     }
-    const wantPlay = menuScreen === "root" && (input.consumeConfirm() || input.consumeShoot());
-    if (wantPlay) startGame();
-    else {
-      input.consumeShoot();
-      input.consumeConfirm();
-    }
+    const confirm = input.consumeConfirm() || input.consumeShoot();
+    if (confirm && menuScreen === "root") showMenu("seed");
+    else if (confirm && menuScreen === "seed") beginFromMenu();
     input.consumeRestart();
     input.consumeChoice();
     input.consumeMute();
@@ -1244,6 +1294,10 @@ function frame(now) {
       inkPools,
       particles,
       hud: hudState(),
+      crosshair:
+        mode === "play" && !lost && !paused && !upgradeOffers && input.mouse.inside
+          ? { x: input.mouse.x, y: input.mouse.y }
+          : null,
     },
   );
   requestAnimationFrame(frame);
@@ -1265,7 +1319,10 @@ if (eventContinue) {
   eventContinue.addEventListener("click", () => dismissEventResult());
 }
 
-document.getElementById("menu-play")?.addEventListener("click", () => startGame());
+document.getElementById("menu-play")?.addEventListener("click", () => showMenu("seed"));
+document.getElementById("seed-go")?.addEventListener("click", () => beginFromMenu());
+document.getElementById("seed-back")?.addEventListener("click", () => showMenu("root"));
+seedInput?.addEventListener("input", () => refreshSeedPreview());
 document.getElementById("menu-controls")?.addEventListener("click", () => showMenu("controls"));
 document.getElementById("menu-about")?.addEventListener("click", () => showMenu("about"));
 document.getElementById("menu-record")?.addEventListener("click", () => showMenu("record"));

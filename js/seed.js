@@ -35,3 +35,10 @@ export function parseSeedFromUrl(search = "") {
 export function sheetRng(runSeed, levelNum) {
   return mulberry32(hashSeed(runSeed >>> 0, levelNum));
 }
+
+const STARTER_WEAPONS = ["wpn_laser", "wpn_smg", "wpn_pierce", "wpn_shotgun"];
+
+export function starterWeaponId(seed) {
+  const rng = mulberry32(hashSeed(seed >>> 0, 9001));
+  return STARTER_WEAPONS[Math.floor(rng() * STARTER_WEAPONS.length)];
+}

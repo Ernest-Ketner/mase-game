@@ -79,6 +79,10 @@ body:not(.in-menu) .status {
   background: var(--paper);
 }
 
+body:not(.in-menu) #game {
+  cursor: none;
+}
+
 .win {
   position: absolute;
   inset: 0;
@@ -158,6 +162,15 @@ body:not(.in-menu) .status {
   display: none;
 }
 
+.build-line {
+  display: block;
+}
+
+.build-lost {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
 .event-body {
   font-size: 17px;
   color: #3d4d66;
@@ -208,6 +221,32 @@ body:not(.in-menu) .status {
 .menu-btn:focus-visible {
   background: #fff;
   outline: none;
+}
+
+.seed-field {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.seed-input {
+  width: 100%;
+  border: 2px solid var(--ink);
+  background: rgba(255, 250, 240, 0.92);
+  color: var(--ink);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.seed-weapon {
+  font-size: 16px;
+  color: #3d4d66;
+  text-align: center;
+  min-height: 1.2em;
 }
 
 .upgrade-skip {

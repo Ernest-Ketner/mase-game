@@ -112,11 +112,14 @@ export function beamHitsCircle(points, cx, cy, radius) {
 }
 
 export function createWeapon() {
-  return { cooldown: 0 };
+  return { cooldown: 0, heat: 0, overheated: false };
 }
 
 export function updateWeapon(weapon, dt) {
   if (weapon.cooldown > 0) weapon.cooldown = Math.max(0, weapon.cooldown - dt);
+  const cool = weapon.overheated ? 0.42 : 0.2;
+  if (weapon.heat > 0) weapon.heat = Math.max(0, weapon.heat - cool * dt);
+  if (weapon.overheated && weapon.heat <= 0.18) weapon.overheated = false;
 }
 
 export function createShot(origin, dir, team, extras = {}) {
@@ -184,7 +187,7 @@ function makePlayerShot(origin, angle, run, wpn, extras = {}) {
  * @returns {object[]|null}
  */
 export function tryFirePlayer(weapon, origin, dir, run, wpn, extras = {}) {
-  if (weapon.cooldown > 0) return null;
+  if (weapon.cooldown > 0 || weapon.overheated) return null;
   const usesAmmo = run.weaponId === "wpn_smg" || run.weaponId === "wpn_shotgun";
   if (usesAmmo) {
     if (!Number.isFinite(run.ammo) || run.ammo <= 0) return null;
@@ -197,6 +200,13 @@ export function tryFirePlayer(weapon, origin, dir, run, wpn, extras = {}) {
 
   weapon.cooldown = wpn.cooldown * run.mods.cooldownMult;
   if (run.mods.lastStand && extras.lowHp) weapon.cooldown *= 0.8;
+  if (run.weaponId === "wpn_laser") {
+    weapon.heat = Math.min(1, (weapon.heat || 0) + 0.34);
+    if (weapon.heat >= 1) {
+      weapon.heat = 1;
+      weapon.overheated = true;
+    }
+  }
   const baseAngle = aimJitter(
     Math.atan2(dir.y, dir.x),
     playerFireSpread(!!extras.moving, run.mods.moveAcc || 0),

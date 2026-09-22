@@ -250,16 +250,32 @@ export function listTaken(run) {
 }
 
 export function listTakenLines(run) {
-  return UPGRADE_CATALOG.map((u) => {
-    const title = takenLabel(u, run);
-    if (!title) return null;
-    return `${title} — ${u.desc}`;
-  }).filter(Boolean);
+  return listBuildLines(run).filter((line) => !line.lost).map((line) => line.text);
+}
+
+export function listBuildLines(run) {
+  const removed = new Map((run.lost || []).map((row) => [row.id, row.removed]));
+  const lines = [];
+  for (const upgrade of UPGRADE_CATALOG) {
+    const title = takenLabel(upgrade, run);
+    if (!title) continue;
+    lines.push({ text: `${title} — ${upgrade.desc}`, lost: false });
+  }
+  for (const upgrade of UPGRADE_CATALOG) {
+    if (stackCount(run, upgrade.id) > 0) continue;
+    const count = removed.get(upgrade.id) || 0;
+    if (count <= 0) continue;
+    const max = upgrade.maxStacks || 1;
+    const title = max > 1 ? `${upgrade.title} (${count}/${max})` : upgrade.title;
+    lines.push({ text: `${title} — ${upgrade.desc}`, lost: true });
+  }
+  return lines;
 }
 
 export function applyUpgrade(run, id, player = null) {
   const upgrade = getUpgrade(id);
   if (!upgrade || !isAvailable(run, upgrade)) return false;
+  noteGain(run, id);
   forceApplyUpgrade(run, upgrade, player);
   return true;
 }
@@ -316,6 +332,7 @@ export function rebuildFromStacks(run, player = null) {
 
 export function stripUpgrade(run, id, player = null) {
   if (!run.stacks?.[id]) return false;
+  noteLoss(run, id);
   run.stacks[id] -= 1;
   if (run.stacks[id] <= 0) {
     delete run.stacks[id];
@@ -325,6 +342,21 @@ export function stripUpgrade(run, id, player = null) {
   }
   rebuildFromStacks(run, player);
   return true;
+}
+
+function noteLoss(run, id) {
+  if (!run.lost) run.lost = [];
+  const row = run.lost.find((item) => item.id === id);
+  if (row) row.removed += 1;
+  else run.lost.push({ id, removed: 1 });
+}
+
+function noteGain(run, id) {
+  if (!run.lost) return;
+  const index = run.lost.findIndex((item) => item.id === id);
+  if (index < 0) return;
+  run.lost[index].removed -= 1;
+  if (run.lost[index].removed <= 0) run.lost.splice(index, 1);
 }
 
 export function stripRandomUpgrade(run, rng = Math.random, player = null, opts = {}) {

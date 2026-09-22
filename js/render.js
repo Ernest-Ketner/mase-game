@@ -242,6 +242,33 @@ function drawPortal(ctx, portal, pulse = 0, flash = 0) {
   ctx.restore();
 }
 
+function drawCrosshair(ctx, aim) {
+  if (!aim) return;
+  const x = aim.x;
+  const y = aim.y;
+  const gap = 4;
+  const arm = 8;
+  ctx.save();
+  ctx.strokeStyle = PEN;
+  ctx.fillStyle = LASER;
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x - gap - arm, y);
+  ctx.lineTo(x - gap, y);
+  ctx.moveTo(x + gap, y);
+  ctx.lineTo(x + gap + arm, y);
+  ctx.moveTo(x, y - gap - arm);
+  ctx.lineTo(x, y - gap);
+  ctx.moveTo(x, y + gap);
+  ctx.lineTo(x, y + gap + arm);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawPreview(ctx, preview) {
   const points = Array.isArray(preview) ? preview : preview?.points;
   if (!points || points.length < 2) return;
@@ -872,6 +899,17 @@ function drawHud(ctx, view, hud) {
 
   ctx.font = small;
   ctx.fillText(hud.gun || "", left, top + 18);
+  if (hud.laserHeat != null && (hud.laserHeat > 0.02 || hud.laserHot)) {
+    const barW = 74;
+    const barY = top + 34;
+    ctx.globalAlpha = 0.28;
+    ctx.fillStyle = PEN;
+    ctx.fillRect(left, barY, barW, 4);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = hud.laserHot ? "#9a2b2b" : "#1e5aab";
+    ctx.fillRect(left, barY, barW * Math.min(1, hud.laserHeat), 4);
+    ctx.fillStyle = PEN;
+  }
   ctx.textAlign = "right";
   ctx.fillText(hud.marks || "", view.width - 10, top);
   ctx.fillText(hud.bank || "", view.width - 10, top + 16);
@@ -1041,4 +1079,5 @@ export function drawFrame(
   }
   ctx.restore();
   drawHud(ctx, view, fx.hud);
+  drawCrosshair(ctx, fx.crosshair);
 }

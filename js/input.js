@@ -1,6 +1,6 @@
 export function createInput(canvas) {
   const keys = new Set();
-  const mouse = { x: 0, y: 0, down: false };
+  const mouse = { x: 0, y: 0, down: false, inside: false };
   let shootQueued = false;
   let restartQueued = false;
   let pauseQueued = false;
@@ -13,11 +13,20 @@ export function createInput(canvas) {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     mouse.x = ((event.clientX - rect.left) / rect.width) * (canvas.width / dpr);
     mouse.y = ((event.clientY - rect.top) / rect.height) * (canvas.height / dpr);
+    mouse.inside = true;
   }
 
   let muteQueued = false;
 
   window.addEventListener("keydown", (event) => {
+    const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
+    if (typing) {
+      if (event.code === "Enter") {
+        event.preventDefault();
+        confirmQueued = true;
+      }
+      return;
+    }
     keys.add(event.code);
     if (event.code === "Space" || event.code === "Enter") {
       event.preventDefault();
@@ -54,6 +63,9 @@ export function createInput(canvas) {
   });
 
   canvas.addEventListener("mousemove", updateMouse);
+  canvas.addEventListener("mouseleave", () => {
+    mouse.inside = false;
+  });
   canvas.addEventListener("mousedown", (event) => {
     updateMouse(event);
     if (event.button === 0) {
