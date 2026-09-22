@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Лабиринт на тетрадном листе</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body class="in-menu">
+    <div class="desk">
+      <header class="hint">
+        <p class="controls">
+          WASD — ходить · ЛКМ / пробел — выстрел (можно зажать) · M — звук · Esc — пауза · R — сначала, тот же сид
+        </p>
+        <p class="status" id="status">Выход с 4 мишеней · тихо — происшествие · жар копится</p>
+      </header>
+      <div class="paper-wrap">
+        <canvas id="game" width="380" height="460"></canvas>
+        <div id="overlay" class="win is-menu is-root-menu" aria-live="polite">
+          <div class="menu-fx" aria-hidden="true">
+            <span class="menu-fx-blot menu-fx-blot-a"></span>
+            <span class="menu-fx-blot menu-fx-blot-b"></span>
+            <span class="menu-fx-laser"></span>
+          </div>
+          <div class="defeat-stamp" aria-hidden="true">
+            <span class="defeat-stamp-ring"></span>
+            <span class="defeat-stamp-x"></span>
+          </div>
+          <div class="win-brand">
+            <p class="win-kicker" id="overlay-kicker">на тетрадном листе</p>
+            <p class="win-title" id="overlay-title">Лабиринт</p>
+          </div>
+          <p class="win-sub" id="overlay-sub">Играть — новый лист 1 · Enter</p>
+          <p id="pause-notes" class="pause-notes hidden"></p>
+          <p id="event-body" class="event-body hidden"></p>
+          <button type="button" class="menu-btn hidden" id="event-continue">Дальше</button>
+          <div id="menu-panel" class="menu-panel">
+            <button type="button" class="menu-btn" id="menu-play">Играть</button>
+            <button type="button" class="menu-btn" id="menu-controls">Управление</button>
+            <button type="button" class="menu-btn" id="menu-about">Об игре</button>
+            <button type="button" class="menu-btn" id="menu-record">Рекорд</button>
+          </div>
+          <div id="menu-page" class="menu-page hidden">
+            <p id="menu-page-text" class="menu-page-text"></p>
+            <button type="button" class="menu-btn" id="menu-back">Назад</button>
+          </div>
+          <div id="upgrade-panel" class="upgrade-panel hidden">
+            <p id="shop-taken" class="shop-taken hidden"></p>
+            <button type="button" class="upgrade-card" id="upgrade-0">
+              <span class="upgrade-key">1</span>
+              <span class="upgrade-title">Апгрейд</span>
+              <span class="upgrade-desc">Описание</span>
+            </button>
+            <button type="button" class="upgrade-card" id="upgrade-1">
+              <span class="upgrade-key">2</span>
+              <span class="upgrade-title">Апгрейд</span>
+              <span class="upgrade-desc">Описание</span>
+            </button>
+            <button type="button" class="upgrade-card" id="upgrade-2">
+              <span class="upgrade-key">3</span>
+              <span class="upgrade-title">Апгрейд</span>
+              <span class="upgrade-desc">Описание</span>
+            </button>
+            <button type="button" class="menu-btn upgrade-skip" id="upgrade-skip">Дальше</button>
+          </div>
+          <div id="death-panel" class="menu-panel hidden">
+            <p id="death-build" class="death-build"></p>
+            <button type="button" class="menu-btn death-retry" id="death-retry">Ещё раз в этом сиде (R)</button>
+            <button type="button" class="menu-btn" id="death-new">Новый забег в другом сиде</button>
+            <button type="button" class="menu-btn" id="death-menu">Выход в меню</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>

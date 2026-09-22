@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Инварианты лабиринта</title>
+    <style>
+      body {
+        font-family: Georgia, serif;
+        background: #f4ecd6;
+        color: #1b3358;
+        padding: 24px;
+      }
+      pre {
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Инварианты лабиринта</h1>
+    <pre id="out">проверка…</pre>
+    <script type="module">
+      import { runInvariants } from "./invariants.js";
+      const out = document.getElementById("out");
+      try {
+        const results = runInvariants();
+        out.textContent = results
+          .map((r) => `ok seed ${r.seed} floors ${r.floors} dens ${r.dens}`)
+          .join("\n") + `\npassed ${results.length} seeds`;
+      } catch (err) {
+        out.textContent = "FAIL\n" + (err?.stack || err?.message || err);
+      }
+    </script>
+  </body>
+</html>
