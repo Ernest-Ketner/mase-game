@@ -5,6 +5,7 @@ import {
   MARGIN,
   COLS,
   ROWS,
+  A1_SCALE,
   sealEntryGate,
   openExitGate,
   updateGates,
@@ -44,6 +45,7 @@ import {
 } from "./upgrades.js";
 import {
   createFog,
+  resizeFog,
   resetFog,
   updateFog,
   canHearEnemy,
@@ -103,6 +105,12 @@ const bounds = {
   right: MARGIN + COLS * CELL,
   bottom: MARGIN + ROWS * CELL,
 };
+
+function syncFieldBounds() {
+  bounds.right = MARGIN + COLS * CELL;
+  bounds.bottom = MARGIN + ROWS * CELL;
+  resizeFog(fog, COLS, ROWS);
+}
 
 let sheet = null;
 let player = null;
@@ -290,6 +298,7 @@ function ensureMenuBackdrop() {
   const rng = sheetRng(runSeed, 0);
   const tag = pickSheetTag(1, rng);
   sheet = generateLevel(rng, { tag, seed: runSeed });
+  syncFieldBounds();
   const outside = sheet.spawnOutside || cellCenter(sheet.start.c, sheet.start.r);
   player = createPlayer(outside);
   player.angle = Math.PI / 2;
@@ -446,7 +455,7 @@ function makeSheet() {
   const tag = pickSheetTag(levelNum, rng);
   const timeLimit = sheetTimeLimit(levelNum, rng);
   const level = generateLevel(rng, { tag, seed: hashVisible(runSeed, levelNum) });
-  level.timeLimit = timeLimit;
+  level.timeLimit = level.tag === "a1" && timeLimit > 0 ? timeLimit * A1_SCALE : timeLimit;
   return level;
 }
 
@@ -459,6 +468,7 @@ function loadSheet(keepPlayer = false) {
   run.pendingHeat = 0;
   const prevHp = keepPlayer && player ? player.hp : null;
   sheet = makeSheet();
+  syncFieldBounds();
   const outside = sheet.spawnOutside || cellCenter(sheet.start.c, sheet.start.r);
   if (!keepPlayer || !player) {
     player = createPlayer(outside);

@@ -1,13 +1,15 @@
-export const COLS = 33;
-export const ROWS = 41;
+export let COLS = 33;
+export let ROWS = 41;
 /** 5 мм при масштабе 4 px/мм → поле 165×205 мм. */
 export const CELL = 20;
 export const MARGIN = 40;
 export const TARGET_COUNT = 7;
 export const TARGET_RADIUS = 8;
 export const NEST_SIZE = 5;
-export const BAY_COLS = 10;
-export const BAY_ROWS = 13;
+export let BAY_COLS = 10;
+export let BAY_ROWS = 13;
+/** А1: стороны ×4, площадь листа ×16. Клетка по-прежнему 5 мм. */
+export const A1_SCALE = 4;
 export const TARGET_MIN_SEP = 5;
 export const FIELD_MM = { width: 165, height: 205, cell: 5 };
 
@@ -65,6 +67,21 @@ function shuffle(list, rng) {
     copy[j] = tmp;
   }
   return copy;
+}
+
+function baySpan(cells) {
+  return Math.floor((cells - 4) / 3) + 1;
+}
+
+export function setSheetMetrics(cols, rows) {
+  COLS = cols;
+  ROWS = rows;
+  BAY_COLS = baySpan(cols);
+  BAY_ROWS = baySpan(rows);
+}
+
+export function resetSheetMetrics() {
+  setSheetMetrics(33, 41);
 }
 
 function makeGrid() {
@@ -1132,32 +1149,6 @@ function applyArena(grid) {
   fillRect(grid, 8, 12, 23, 27);
 }
 
-/**
- * Зал 8×8 — площадь обычной клетки 2×2, умноженная на 16.
- * Сетка та же: крупнее шаг лабиринта, не размер листа.
- */
-function applyA1(grid) {
-  const span = 3;
-  for (let sbr = 0; sbr + span <= BAY_ROWS; sbr += span) {
-    for (let sbc = 0; sbc + span <= BAY_COLS; sbc += span) {
-      for (let br = sbr; br < sbr + span; br++) {
-        for (let bc = sbc; bc < sbc + span; bc++) {
-          if (bc + 1 < sbc + span) openLink(grid, { bc, br }, { bc: bc + 1, br });
-          if (br + 1 < sbr + span) openLink(grid, { bc, br }, { bc, br: br + 1 });
-        }
-      }
-      if (sbc + span < BAY_COLS) {
-        const br = sbr + 1;
-        openLink(grid, { bc: sbc + span - 1, br }, { bc: sbc + span, br });
-      }
-      if (sbr + span < BAY_ROWS) {
-        const bc = sbc + 1;
-        openLink(grid, { bc, br: sbr + span - 1 }, { bc, br: sbr + span });
-      }
-    }
-  }
-}
-
 /** Кольцо по краю листа — поля тетради. */
 function applyMargin(grid) {
   for (let bc = 0; bc < BAY_COLS - 1; bc++) {
@@ -1263,7 +1254,6 @@ function healFold(grid, rng, startCell) {
 
 function applySheetShape(grid, tagId, rng, startCell) {
   if (tagId === "arena") applyArena(grid);
-  else if (tagId === "a1") applyA1(grid);
   else if (tagId === "margin") applyMargin(grid);
   else if (tagId === "fold") healFold(grid, rng, startCell);
   else return;
@@ -1282,7 +1272,7 @@ export const SHEET_TAGS = [
   { id: "narrow", label: "узкие коридоры", hint: "меньше петель, тесные проходы" },
   { id: "gate", label: "порталы у выхода", hint: "враги чаще выходят у нижнего края" },
   { id: "arena", label: "арена", hint: "открытая площадь в центре, коридоры по краям" },
-  { id: "a1", label: "А1", hint: "залы 8×8: клетка лабиринта в 16 раз крупнее" },
+  { id: "a1", label: "А1", hint: "лист 132×164: площадь в 16 раз больше обычного" },
   { id: "fold", label: "сгиб", hint: "лист пополам, переход только в двух местах" },
   { id: "margin", label: "поля", hint: "по краю листа кольцевой проход" },
 ];
@@ -1297,6 +1287,8 @@ export function pickSheetTag(levelNum, rng = Math.random) {
 export function generateLevel(rng = Math.random, options = {}) {
   const tag = options.tag || null;
   const tagId = tag?.id || tag || null;
+  if (tagId === "a1") setSheetMetrics(33 * A1_SCALE, 41 * A1_SCALE);
+  else resetSheetMetrics();
   const extraFrac = tagId === "narrow" ? 0.02 : 0.12;
   const roomCount = tagId === "rooms" ? 16 + Math.floor(rng() * 3) : null;
   const grid = makeGrid();
@@ -1400,6 +1392,8 @@ export function generateLevel(rng = Math.random, options = {}) {
     targets,
     tag: tagId,
     tagLabel: tag?.label || "",
+    cols: COLS,
+    rows: ROWS,
     seed: options.seed ?? null,
   };
 }

@@ -641,22 +641,24 @@ function drawFogOverlay(ctx, fog, vis = null) {
   if (!fog) return;
   const until = fog.until;
   const now = fog.now;
+  const cols = fog.cols || COLS;
+  const rows = fog.rows || ROWS;
   let r0 = 0;
-  let r1 = ROWS;
+  let r1 = rows;
   let c0 = 0;
-  let c1 = COLS;
+  let c1 = cols;
   if (vis) {
     c0 = Math.max(0, Math.floor((vis.left - MARGIN) / CELL) - 1);
-    c1 = Math.min(COLS, Math.ceil((vis.right - MARGIN) / CELL) + 1);
+    c1 = Math.min(cols, Math.ceil((vis.right - MARGIN) / CELL) + 1);
     r0 = Math.max(0, Math.floor((vis.top - MARGIN) / CELL) - 1);
-    r1 = Math.min(ROWS, Math.ceil((vis.bottom - MARGIN) / CELL) + 1);
+    r1 = Math.min(rows, Math.ceil((vis.bottom - MARGIN) / CELL) + 1);
   }
   ctx.save();
   ctx.fillStyle = "rgba(92, 86, 74, 0.56)";
   for (let r = r0; r < r1; r++) {
     let c = c0;
     const y = MARGIN + r * CELL;
-    const row = r * COLS;
+    const row = r * cols;
     while (c < c1) {
       if (until[row + c] > now) {
         c += 1;

@@ -51,11 +51,33 @@ function checkLevel(seed, tagId = null) {
       floors += 1;
       if (coveredByFloorBlock(level.grid, c, r)) blocks += 1;
       if (!isRimGateCell(c, r) && openNeighbors(level.grid, c, r).length < 2) leaves += 1;
-      assert(
-        cellReachable(level.grid, level.start, { c, r }),
-        `seed ${label}: unreachable ${c},${r}`,
-      );
+      if ((level.cols || COLS) <= 40) {
+        assert(
+          cellReachable(level.grid, level.start, { c, r }),
+          `seed ${label}: unreachable ${c},${r}`,
+        );
+      }
     }
+  }
+  if ((level.cols || COLS) > 40) {
+    const reach = new Set();
+    const queue = [level.start];
+    reach.add(`${level.start.c},${level.start.r}`);
+    while (queue.length > 0) {
+      const cur = queue.pop();
+      for (const n of openNeighbors(level.grid, cur.c, cur.r)) {
+        const key = `${n.c},${n.r}`;
+        if (reach.has(key)) continue;
+        reach.add(key);
+        queue.push(n);
+      }
+    }
+    let reached = 0;
+    for (const key of reach) {
+      const [c, r] = key.split(",").map(Number);
+      if (r >= 1 && r < ROWS - 1 && c >= 1 && c < COLS - 1) reached += 1;
+    }
+    assert(reached === floors, `seed ${label}: unreachable floors ${floors - reached}`);
   }
   assert(floors > 80, `seed ${label}: too few floors ${floors}`);
   assert(blocks / floors >= 0.92, `seed ${label}: floor blocks ${blocks}/${floors}`);
@@ -64,7 +86,8 @@ function checkLevel(seed, tagId = null) {
     assert(solidRect(level.grid, 10, 14, 21, 25), `seed ${label}: arena plaza missing`);
   }
   if (tagId === "a1") {
-    assert(solidRect(level.grid, 1, 1, 8, 8), `seed ${label}: A1 hall missing`);
+    assert(level.cols === 132 && level.rows === 164, `seed ${label}: A1 size ${level.cols}×${level.rows}`);
+    assert(level.grid.length === 164 && level.grid[0].length === 132, `seed ${label}: A1 grid mismatch`);
   }
   if (tagId === "margin") {
     assert(isFloor(level.grid, 3, 1), `seed ${label}: margin ring missing`);
