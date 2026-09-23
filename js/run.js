@@ -7,6 +7,9 @@ import { MAX_BOUNCES, PLAYER_COOLDOWN, PLAYER_LASER_SPEED } from "./laser.js";
 
 export const NOTEBOOK_GOAL = 20;
 export const SHEET_AMMO_GRANT = 6;
+export const GOLD_PER_KILL = 10;
+export const LIFE_PRICE = 900;
+export const REROLL_PRICE = 100;
 
 export function createRunState() {
   return {
@@ -18,6 +21,7 @@ export function createRunState() {
     firstShotPending: false,
     targetHealCount: 0,
     targetBank: 0,
+    gold: 0,
     heat: 0,
     pendingHeat: 0,
     pendingEvent: false,

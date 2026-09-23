@@ -320,6 +320,24 @@ body:not(.in-menu) #game {
   display: none;
 }
 
+.upgrade-reroll {
+  width: 100%;
+  flex-basis: 100%;
+  margin-top: 4px;
+  border-color: #8a5d12;
+  color: #6e4a0e;
+}
+
+.upgrade-reroll.hidden,
+.death-buy.hidden {
+  display: none;
+}
+
+.menu-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .upgrade-panel {
   display: flex;
   gap: 14px;
@@ -827,4 +845,15 @@ body.in-menu .desk {
 .win.is-defeat .death-retry:focus-visible {
   background: #a31a22;
   color: #fff;
+}
+
+.win.is-defeat .death-buy {
+  border-color: #8a5d12;
+  color: #6e4a0e;
+  background: #fbefcf;
+}
+
+.win.is-defeat .death-buy:not(:disabled):hover,
+.win.is-defeat .death-buy:not(:disabled):focus-visible {
+  background: #fff4d8;
 }

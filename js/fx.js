@@ -3,6 +3,7 @@ export function createFx() {
     blots: [],
     numbers: [],
     plates: [],
+    coins: [],
   };
 }
 
@@ -10,6 +11,41 @@ export function resetFx(fx) {
   fx.blots.length = 0;
   fx.numbers.length = 0;
   fx.plates.length = 0;
+  fx.coins.length = 0;
+}
+
+const COIN_RISE = 0.35;
+const COIN_LIFE = 0.95;
+
+/** Координаты экранные: монета летит к счётчику HUD, камера ей не мешает. */
+export function spawnGold(fx, sx, sy, amount) {
+  fx.coins.push({ sx, sy, text: `+${amount}`, life: COIN_LIFE });
+}
+
+function easeInOut(t) {
+  return t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
+}
+
+export function drawGoldFx(ctx, fx, target) {
+  if (!fx?.coins?.length || !target) return;
+  ctx.save();
+  ctx.font = "700 15px Caveat, 'Segoe Print', 'Comic Sans MS', cursive";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const coin of fx.coins) {
+    const age = COIN_LIFE - coin.life;
+    let x = coin.sx;
+    let y = coin.sy - 14 - Math.min(age, COIN_RISE) * 30;
+    if (age > COIN_RISE) {
+      const t = easeInOut(Math.min(1, (age - COIN_RISE) / (COIN_LIFE - COIN_RISE)));
+      x += (target.x - x) * t;
+      y += (target.y - y) * t;
+    }
+    ctx.globalAlpha = age > COIN_LIFE - 0.12 ? Math.max(0, coin.life / 0.12) : 1;
+    ctx.fillStyle = "#a8741a";
+    ctx.fillText(coin.text, x, y);
+  }
+  ctx.restore();
 }
 
 export function spawnBlot(fx, x, y, color = "#1b3358", count = 7) {
@@ -56,6 +92,8 @@ export function updateFx(fx, dt) {
     n.y -= 22 * dt;
   }
   for (const p of fx.plates) p.life -= dt;
+  for (const c of fx.coins) c.life -= dt;
+  fx.coins = fx.coins.filter((c) => c.life > 0);
   fx.blots = fx.blots.filter((b) => b.life > 0);
   fx.numbers = fx.numbers.filter((n) => n.life > 0);
   fx.plates = fx.plates.filter((p) => p.life > 0);

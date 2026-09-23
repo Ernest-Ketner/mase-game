@@ -32,7 +32,20 @@ import { createInput } from "./input.js";
 import { setupCanvas, drawFrame } from "./render.js";
 import { createCamera, snapCamera, updateCamera, screenToWorld, viewSize, shakeCamera } from "./camera.js";
 import { updateEnemies, hurtEnemy, kindHint, stunEnemy } from "./enemy.js";
-import { createRunState, applyPlayerStats, resetLevelShield, usesAmmo, syncMoveSpeed, applyWeaponSwap, weaponDef, NOTEBOOK_GOAL, SHEET_AMMO_GRANT } from "./run.js";
+import {
+  createRunState,
+  applyPlayerStats,
+  resetLevelShield,
+  usesAmmo,
+  syncMoveSpeed,
+  applyWeaponSwap,
+  weaponDef,
+  NOTEBOOK_GOAL,
+  SHEET_AMMO_GRANT,
+  GOLD_PER_KILL,
+  LIFE_PRICE,
+  REROLL_PRICE,
+} from "./run.js";
 import {
   pickOffers,
   applyUpgrade,
@@ -76,12 +89,13 @@ import {
   setSfxOn,
   setMusicTrack,
 } from "./audio.js";
-import { createFx, resetFx, spawnBlot, spawnDamage, updateFx } from "./fx.js";
+import { createFx, resetFx, spawnBlot, spawnDamage, spawnGold, updateFx } from "./fx.js";
 import { pickSheetEvent } from "./events.js";
 import { sheetTimeLimit, overtimeInterval, formatClock } from "./deadline.js";
 
 const EXIT_NEED = 4;
 const PICK_COST = 3;
+const OVERTIME_GRACE = 20;
 const RECORD_KEY = "mase-best-sheet";
 
 const canvas = document.getElementById("game");
@@ -92,6 +106,7 @@ const overlaySub = document.getElementById("overlay-sub");
 const overlayKicker = document.getElementById("overlay-kicker");
 const upgradePanel = document.getElementById("upgrade-panel");
 const upgradeSkip = document.getElementById("upgrade-skip");
+const upgradeReroll = document.getElementById("upgrade-reroll");
 const shopTaken = document.getElementById("shop-taken");
 const upgradeCards = [
   document.getElementById("upgrade-0"),
@@ -166,7 +181,7 @@ let overtimeWait = 0;
 let lastHurtCause = "laser";
 let muteHintLife = 0;
 let timeRng = Math.random;
-const hudPulse = { hp: 0, goal: 0, gun: 0, bank: 0, feature: 0 };
+const hudPulse = { hp: 0, goal: 0, gun: 0, bank: 0, gold: 0, feature: 0 };
 let hudSnap = null;
 
 function setStatus(text) {
@@ -542,15 +557,20 @@ function showUpgradeSelect(offers, mode = "bank") {
   hidePanels();
   setMenuChrome(false);
   if (mode === "bounty") {
-    showOverlay("Добыча", "Сильный упал · выбери 1 из 2");
+    showOverlay("Добыча", `Сильный упал · выбери 1 из 2 · золото ${run.gold}`);
   } else {
     const keys = offers.length >= 3 ? "1 / 2 / 3" : "1 / 2";
     showOverlay(
       "Прокачка",
-      `Метки: ${run.targetBank} · выбор ${PICK_COST} · ${keys} или Дальше`,
+      `Метки: ${run.targetBank} · выбор ${PICK_COST} · золото ${run.gold} · ${keys} или Дальше`,
     );
   }
   if (upgradeSkip) upgradeSkip.classList.toggle("hidden", mode === "bounty");
+  if (upgradeReroll) {
+    upgradeReroll.classList.remove("hidden");
+    upgradeReroll.disabled = run.gold < REROLL_PRICE;
+    upgradeReroll.textContent = `Обновить — ${REROLL_PRICE} (R)`;
+  }
   fillShopTaken(true);
   if (upgradePanel) {
     upgradePanel.classList.remove("hidden");
@@ -571,6 +591,19 @@ function showUpgradeSelect(offers, mode = "bank") {
       card.querySelector(".upgrade-desc").textContent = offerDesc(up, run);
     }
   }
+}
+
+function rerollOffers() {
+  if (!upgradeOffers || (shopMode !== "bank" && shopMode !== "bounty")) return;
+  if (run.gold < REROLL_PRICE) return;
+  const offers = pickOffers(run, upgradeOffers.length, Math.random, {
+    lowLife: player?.hp === 1,
+    exclude: upgradeOffers.map((u) => u.id),
+  });
+  if (offers.length === 0) return;
+  run.gold -= REROLL_PRICE;
+  sfx.upgrade();
+  showUpgradeSelect(offers, shopMode);
 }
 
 function hideUpgradeSelect() {
@@ -670,11 +703,11 @@ function showMenu(screen = "root") {
   if (screen === "controls") {
     showOverlay("Управление", "");
     menuPageText.textContent =
-      "WASD или стрелки — ходить.\nЛКМ или пробел — выстрел, можно зажать.\nЛазер греется и после очереди стынет.\nПосле «Играть» можно вписать сид. Пустое поле — случайный. На одном сиде всегда одно стартовое оружие.\nМузыка и звуки — в «Опциях» и на паузе.\nM — выключить или включить сразу и музыку, и звуки.\nНа бегу лучи разлетаются шире, чем стоя.\nПрицел (пунктир траектории) берётся как апгрейд.\nEsc — пауза (в меню — назад).\nR — начать забег заново с того же сида.";
+      `WASD или стрелки — ходить.\nЛКМ или пробел — выстрел, можно зажать.\nЛазер греется и после очереди стынет.\nПосле «Играть» можно вписать сид. Пустое поле — случайный. На одном сиде всегда одно стартовое оружие.\nМузыка и звуки — в «Опциях» и на паузе.\nM — выключить или включить сразу и музыку, и звуки.\nНа бегу лучи разлетаются шире, чем стоя.\nПрицел (пунктир траектории) берётся как апгрейд.\nEsc — пауза (в меню — назад).\nR — начать забег заново с того же сида; в прокачке R — обновить карточки за ${REROLL_PRICE} золота.`;
   } else if (screen === "about") {
     showOverlay("Об игре", "");
     menuPageText.textContent =
-      `Лист 1: собери ${EXIT_NEED} мишени из ${TARGET_COUNT} — откроются два шлюза снизу.\nСо 2-го листа цель другая и зависит от сида: все метки, просто проход, выжить, зачистка. С 3-го может выпасть босс — убить чемпиона.\nЗелёный «тихо» — обычный следующий лист и происшествие с выбором. Красный «жар» — следующий лист сложнее; каждый красный подряд поднимает жар (враги крепче и чаще).\nМишени только подбирать: подойти вплотную, выстрелом не сбить.\nЛишние метки копятся: после листа 3 метки = выбор 1 из 2 апгрейдов, при банке 6 — 3 карточки.\nС ${Math.ceil(TARGET_COUNT * 0.75)} мишеней начинается охота.\nСтраж и чемпион — не с первого листа. Цель тетради — ${NOTEBOOK_GOAL} листов, можно идти дальше.\nИногда лист со сроком (с 2-го); после ${NOTEBOOK_GOAL} срок всегда и короче. Если время вышло — раз в несколько секунд 1 урон.\nАвтомат и дробь получают +${SHEET_AMMO_GRANT} патронов на каждом новом листе.\nСид забега: ${runSeed}`;
+      `Лист 1: собери ${EXIT_NEED} мишени из ${TARGET_COUNT} — откроются два шлюза снизу.\nСо 2-го листа цель другая и зависит от сида: все метки, просто проход, выжить, зачистка. С 3-го может выпасть босс — убить чемпиона.\nЗелёный «тихо» — обычный следующий лист и происшествие с выбором. Красный «жар» — следующий лист сложнее; каждый красный подряд поднимает жар (враги крепче и чаще).\nМишени только подбирать: подойти вплотную, выстрелом не сбить.\nЛишние метки копятся: после листа 3 метки = выбор 1 из 2 апгрейдов, при банке 6 — 3 карточки.\nС ${Math.ceil(TARGET_COUNT * 0.75)} мишеней начинается охота.\nСтраж и чемпион — не с первого листа. Цель тетради — ${NOTEBOOK_GOAL} листов, можно идти дальше.\nИногда лист со сроком (с 2-го); после ${NOTEBOOK_GOAL} срок всегда и короче. Если время вышло — раз в несколько секунд 1 урон.\nАвтомат и дробь получают +${SHEET_AMMO_GRANT} патронов на каждом новом листе.\nЗа каждого врага +${GOLD_PER_KILL} золота. Золото обновляет карточки прокачки (${REROLL_PRICE}) и покупает жизнь на окне поражения (${LIFE_PRICE}). Врагов на листе конечное число: 10 на первом и +5 на каждом следующем.\nСид забега: ${runSeed}`;
   } else {
     showOverlay("Рекорд", "");
     const best = bestSheet();
@@ -778,6 +811,13 @@ function tryOpenExit() {
 
 function noteKill(enemy) {
   sfx.kill();
+  run.gold += GOLD_PER_KILL;
+  spawnGold(
+    particles,
+    enemy.x - camera.x + camera.viewW / 2,
+    enemy.y - camera.y + camera.viewH / 2,
+    GOLD_PER_KILL,
+  );
   const needAmmo = usesAmmo(run) && run.ammo <= 0;
   maybeDropLoot(enemy.x, enemy.y, needAmmo);
   if (sheet) {
@@ -964,6 +1004,7 @@ function showSheetEvent(ev) {
     eventBody.classList.remove("hidden");
   }
   if (upgradeSkip) upgradeSkip.classList.add("hidden");
+  upgradeReroll?.classList.add("hidden");
   fillShopTaken(false);
   if (upgradePanel) {
     upgradePanel.classList.remove("hidden");
@@ -1091,7 +1132,9 @@ function goalHud() {
   else if (id === "all") progress = `${hit} из ${total}`;
   else if (id === "pass") progress = "к нижним шлюзам";
   else if (id === "boss") progress = sheet?.bossDown ? "убит" : "найди чемпиона";
-  else if (id === "survive") progress = formatClock(sheet?.surviveLeft || 0);
+  else if (id === "survive") {
+    progress = (sheet?.surviveLeft || 0) > 0 ? formatClock(sheet.surviveLeft) : "продержался";
+  }
   else if (id === "kills") progress = `${sheet?.kills || 0} из ${sheet?.killQuota || 0}`;
   return {
     title: def.label,
@@ -1123,10 +1166,11 @@ function hudState() {
     laserHeat: run.weaponId === "wpn_laser" ? weapon?.heat || 0 : null,
     laserHot: run.weaponId === "wpn_laser" && !!weapon?.overheated,
     goalTitle: goal.title,
-    goalProgress: goal.progress,
+    goalProgress: sheet?.objective === "survive" && (sheet.surviveLeft || 0) > 0 ? "" : goal.progress,
     goalHint: goal.hint,
     goalLife: goal.life,
     bank: run.targetBank,
+    gold: run.gold,
     feature: featureLine(),
     hunt: isHuntMode(),
     exitOpen: !!sheet?.exitOpen && !isHuntMode() && !overtime,
@@ -1134,6 +1178,10 @@ function hudState() {
     hintLife: muteHintLife > 0 ? muteHintLife : kindHintLife,
     notebook: notebookFlash,
     clock: sheetTimed ? (overtime ? "срок 0:00" : `срок ${formatClock(sheetTimer)}`) : "",
+    surviveClock:
+      sheet?.objective === "survive" && (sheet.surviveLeft || 0) > 0
+        ? `выжить ${formatClock(sheet.surviveLeft)}`
+        : "",
     overtime,
     alarm: overtime || (sheet?.objective === "survive" && !sheet?.exitOpen),
     heat: run.heat || 0,
@@ -1159,6 +1207,7 @@ function resetHudPulse() {
   hudPulse.goal = 0;
   hudPulse.gun = 0;
   hudPulse.bank = 0;
+  hudPulse.gold = 0;
   hudPulse.feature = 0;
 }
 
@@ -1171,6 +1220,7 @@ function tickHudPulse(dt) {
     goal: goalPulseKey(),
     gun: `${run.weaponId}|${gun.hot}|${usesAmmo(run) ? run.ammo : gun.state === "готов" ? "ready" : "cd"}`,
     bank: run.targetBank,
+    gold: run.gold,
     feature: featureLine(),
   };
   if (hudSnap) {
@@ -1178,6 +1228,7 @@ function tickHudPulse(dt) {
     if (snap.goal !== hudSnap.goal) hudPulse.goal = 0.6;
     if (snap.gun !== hudSnap.gun) hudPulse.gun = 0.5;
     if (snap.bank !== hudSnap.bank) hudPulse.bank = 0.45;
+    if (snap.gold !== hudSnap.gold) hudPulse.gold = 0.45;
     if (snap.feature !== hudSnap.feature) hudPulse.feature = 0.5;
   }
   hudSnap = snap;
@@ -1286,7 +1337,7 @@ function updateHud() {
     return;
   }
   const h = hudState();
-  setStatus(`цель ${h.goalTitle}: ${h.goalProgress} · ${h.feature} · ${h.weaponName} ${h.weaponState} · жизни ${h.hp}/${h.maxHp} · лист ${levelNum}`);
+  setStatus(`цель ${h.goalTitle}: ${goalHud().progress} · ${h.feature} · ${h.weaponName} ${h.weaponState} · жизни ${h.hp}/${h.maxHp} · лист ${levelNum}`);
 }
 
 function maybeDropLoot(x, y, forceAmmo = false) {
@@ -1397,8 +1448,35 @@ function showDefeat(cause, sound = true) {
     "без апгрейдов",
     [`лист ${levelNum} · сид ${runSeed}`],
   );
+  syncBuyLife();
   if (deathPanel) deathPanel.classList.remove("hidden");
   fitDeathBuild();
+  updateHud();
+}
+
+function syncBuyLife() {
+  const btn = document.getElementById("death-buy");
+  if (!btn) return;
+  btn.classList.toggle("hidden", lastHurtCause === "quit");
+  btn.disabled = run.gold < LIFE_PRICE;
+  btn.textContent = `Купить жизнь — ${LIFE_PRICE} (есть ${run.gold})`;
+}
+
+function buyLife() {
+  if (mode !== "play" || !lost || lastHurtCause === "quit" || run.gold < LIFE_PRICE) return;
+  run.gold -= LIFE_PRICE;
+  lost = false;
+  paused = false;
+  player.hp = player.maxHp;
+  grantInvuln(player, 2);
+  if (lastHurtCause === "time" && sheetTimed) {
+    sheetTimer = OVERTIME_GRACE;
+    overtime = false;
+    overtimeWait = 0;
+  }
+  lastHurtCause = "laser";
+  hideOverlay();
+  sfx.upgrade();
   updateHud();
 }
 
@@ -1694,7 +1772,10 @@ function frame(now) {
     if (upgradeOffers) skipShop();
     else togglePause();
   }
-  if (input.consumeRestart()) startGame();
+  if (input.consumeRestart()) {
+    if (upgradeOffers) rerollOffers();
+    else startGame();
+  }
   if (input.consumeConfirm() && upgradeOffers) skipShop();
 
   const choice = input.consumeChoice?.();
@@ -1854,6 +1935,8 @@ if (upgradeSkip) {
   upgradeSkip.addEventListener("click", () => skipShop());
 }
 
+upgradeReroll?.addEventListener("click", () => rerollOffers());
+
 if (eventContinue) {
   eventContinue.addEventListener("click", () => dismissEventResult());
 }
@@ -1884,13 +1967,13 @@ document.getElementById("menu-controls")?.addEventListener("click", () => showMe
 document.getElementById("menu-about")?.addEventListener("click", () => showMenu("about"));
 document.getElementById("menu-record")?.addEventListener("click", () => showMenu("record"));
 document.getElementById("menu-back")?.addEventListener("click", () => showMenu("root"));
+document.getElementById("death-buy")?.addEventListener("click", () => buyLife());
 document.getElementById("death-retry")?.addEventListener("click", () => startGame());
 document.getElementById("death-new")?.addEventListener("click", () => startFreshSeed());
 document.getElementById("death-menu")?.addEventListener("click", () => goToMenu());
 document.getElementById("pause-quit")?.addEventListener("click", () => quitLevel());
 
 bindAudioUnlock();
-
 try {
   showMenu("root");
   requestAnimationFrame(frame);

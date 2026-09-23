@@ -2,7 +2,7 @@ import { CELL, COLS, MARGIN, ROWS, cellCenter, worldSize } from "./maze.js";
 import { cellExplored } from "./fog.js";
 import { applyCamera, viewRect } from "./camera.js";
 import { kindMark } from "./enemy.js";
-import { drawFx } from "./fx.js";
+import { drawFx, drawGoldFx } from "./fx.js";
 
 const PAPER = "#f4ecd6";
 const GRID = "rgba(120, 168, 196, 0.45)";
@@ -1117,12 +1117,37 @@ function drawHud(ctx, view, hud) {
   }
   inkText(ctx, `банк ${hud.bank ?? 0}`, view.width - 10, rightY, blinkColor(pulse.bank, false, PEN));
   rightY += 16;
+  let goldAt = null;
+  if (hud.gold != null) {
+    const goldText = `золото ${hud.gold}`;
+    inkText(ctx, goldText, view.width - 10, rightY, blinkColor(pulse.gold, false, "#8a5d12"));
+    goldAt = { x: view.width - 10 - ctx.measureText(goldText).width / 2, y: rightY + 8 };
+    rightY += 16;
+  }
   if (hud.feature) {
     inkText(ctx, hud.feature, view.width - 10, rightY, blinkColor(pulse.feature, false, PEN));
     rightY += 16;
   }
-  if (hud.clock) {
-    inkText(ctx, hud.clock, view.width - 10, rightY, hud.overtime ? "#9a2b2b" : "#1e5aab");
+
+  let stampY = 36;
+  if (hud.clock || hud.surviveClock) {
+    ctx.textAlign = "center";
+    let clockY = top - 2;
+    if (hud.clock) {
+      ctx.font = "700 26px Caveat, 'Segoe Print', 'Comic Sans MS', cursive";
+      inkText(ctx, hud.clock, view.width / 2, clockY, hud.overtime ? "#9a2b2b" : "#1e5aab");
+      clockY += 26;
+    }
+    if (hud.surviveClock) {
+      const lead = !hud.clock;
+      ctx.font = lead
+        ? "700 26px Caveat, 'Segoe Print', 'Comic Sans MS', cursive"
+        : "700 19px Caveat, 'Segoe Print', 'Comic Sans MS', cursive";
+      inkText(ctx, hud.surviveClock, view.width / 2, clockY, "#9a2b2b");
+      clockY += lead ? 26 : 20;
+    }
+    stampY = clockY + 16;
+    ctx.font = small;
   }
 
   ctx.textAlign = "left";
@@ -1144,7 +1169,7 @@ function drawHud(ctx, view, hud) {
   }
   if (hud.hunt) {
     ctx.save();
-    ctx.translate(view.width / 2, 36);
+    ctx.translate(view.width / 2, stampY);
     ctx.rotate(-0.08);
     ctx.strokeStyle = "#9a2b2b";
     ctx.lineWidth = 2;
@@ -1158,7 +1183,7 @@ function drawHud(ctx, view, hud) {
   }
   if (hud.overtime) {
     ctx.save();
-    ctx.translate(view.width / 2, hud.hunt ? 64 : 36);
+    ctx.translate(view.width / 2, hud.hunt ? stampY + 28 : stampY);
     ctx.rotate(0.06);
     ctx.strokeStyle = "#9a2b2b";
     ctx.lineWidth = 2;
@@ -1200,6 +1225,7 @@ function drawHud(ctx, view, hud) {
     ctx.restore();
   }
   ctx.restore();
+  return goldAt;
 }
 
 function drawShot(ctx, shot, mode = "full") {
@@ -1293,7 +1319,8 @@ export function drawFrame(
   }
   ctx.restore();
   drawAlarmWash(ctx, view, fx.hud?.alarm);
-  drawHud(ctx, view, fx.hud);
+  const goldAt = drawHud(ctx, view, fx.hud);
+  drawGoldFx(ctx, fx.particles, goldAt);
   drawCrosshair(ctx, fx.crosshair);
 }
 

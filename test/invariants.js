@@ -10,6 +10,8 @@ import {
   TARGET_COUNT,
 } from "../js/maze.js";
 import { mulberry32 } from "../js/seed.js";
+import { createSpawner, beginSheetSpawns, tickSpawner, sheetEnemyCap } from "../js/spawn.js";
+import { killQuota } from "../js/objectives.js";
 
 const SEEDS = [1, 7, 42, 99, 2026, 314159, 777, 12345];
 
@@ -120,6 +122,58 @@ function checkLevel(seed, tagId = null) {
 
 const TAGS = ["arena", "a1", "fold", "margin", "draft", "rooms", "narrow", "gate"];
 
+/** Прогон спавнера на листе: всех сразу «убиваем», чтобы упираться только в лимит листа. */
+function simulateSpawns(levelNum, objective, tagId = null) {
+  const level = generateLevel(mulberry32(levelNum * 131 + 5), { tag: tagId, seed: levelNum });
+  level.objective = objective;
+  const spawner = createSpawner();
+  let spawned = 0;
+  let champions = 0;
+  const enemies = [];
+  const world = {
+    sheet: level,
+    enemies,
+    levelNum,
+    heat: 0,
+    run: { mods: { spawnWound: 0 }, heat: 0 },
+    player: { x: level.start.c * 20, y: level.start.r * 20 },
+    hitCount: () => 7,
+    onSpawn(e) {
+      spawned += 1;
+      if (e.kind === "champion") champions += 1;
+    },
+  };
+  beginSheetSpawns(spawner, world);
+  for (let step = 0; step < 12000; step++) {
+    tickSpawner(spawner, 0.25, world);
+    for (const e of enemies) e.alive = false;
+    enemies.length = 0;
+  }
+  return { spawned, champions, cap: sheetEnemyCap(levelNum) };
+}
+
+function checkSpawnCaps() {
+  const lines = [];
+  for (let n = 1; n <= 24; n++) {
+    const cap = sheetEnemyCap(n);
+    assert(cap === 10 + 5 * (n - 1), `sheet ${n}: cap ${cap}`);
+    if (n >= 2) assert(killQuota(n) <= cap, `sheet ${n}: kill quota ${killQuota(n)} > cap ${cap}`);
+    const plain = simulateSpawns(n, "marks");
+    assert(plain.spawned <= cap, `sheet ${n}: spawned ${plain.spawned} > cap ${cap}`);
+    assert(plain.spawned >= cap - 2, `sheet ${n}: spawner stalled at ${plain.spawned}/${cap}`);
+    if (n >= 3) {
+      const boss = simulateSpawns(n, "boss");
+      assert(boss.champions >= 1, `sheet ${n}: boss champion missing`);
+      assert(boss.spawned <= cap + 3, `sheet ${n}: boss sheet spawned ${boss.spawned} > cap ${cap}+3`);
+    }
+    lines.push(`sheet ${n}: cap ${cap} spawned ${plain.spawned}`);
+  }
+  const a1 = simulateSpawns(5, "marks", "a1");
+  assert(a1.spawned <= a1.cap, `a1: spawned ${a1.spawned} > cap ${a1.cap}`);
+  lines.push(`a1 sheet 5: cap ${a1.cap} spawned ${a1.spawned}`);
+  return lines;
+}
+
 export function runInvariants() {
   const results = [];
   for (const seed of SEEDS) results.push(checkLevel(seed));
@@ -135,6 +189,7 @@ function main() {
     console.log(`ok seed ${r.seed} floors ${r.floors} dens ${r.dens}`);
   }
   console.log(`passed ${results.length} seeds`);
+  for (const line of checkSpawnCaps()) console.log(`ok ${line}`);
 }
 
 const isNode = typeof process !== "undefined" && process.versions?.node;

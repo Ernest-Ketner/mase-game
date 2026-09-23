@@ -15,15 +15,33 @@ export function createSpawner() {
     wardenDone: false,
     championDone: 0,
     championEvent: 0,
+    total: 0,
+    cap: sheetEnemyCap(1),
   };
 }
 
-export function resetSpawner(spawner) {
+export function resetSpawner(spawner, levelNum = 1) {
   spawner.pending = [];
   spawner.timer = 8;
   spawner.wardenDone = false;
   spawner.championDone = 0;
   spawner.championEvent = 0;
+  spawner.total = 0;
+  spawner.cap = sheetEnemyCap(levelNum);
+}
+
+/** Сколько врагов всего может выйти за лист: золото за убийства конечно. */
+export function sheetEnemyCap(levelNum) {
+  const n = Math.max(1, Math.floor(Number(levelNum)) || 1);
+  return 10 + 5 * (n - 1);
+}
+
+function capLeft(spawner) {
+  return Math.max(0, spawner.cap - spawner.total);
+}
+
+function bossJob(world, kind) {
+  return kind === "champion" && world.sheet?.objective === "boss" && world.levelNum >= 3;
 }
 
 export function wavePhase(hits) {
@@ -124,8 +142,9 @@ export function pickSpawnDen(sheet, pending, enemies, rng = Math.random, player 
   return pool[Math.floor(rng() * pool.length)];
 }
 
-export function queueSpawn(spawner, world, kind = "grunt", den = null, force = false) {
+export function queueSpawn(spawner, world, kind = "grunt", den = null, force = false, overCap = false) {
   const { enemies, sheet } = world;
+  if (!overCap && capLeft(spawner) <= 0) return false;
   if (!force && aliveCount(enemies) + spawner.pending.length >= aliveLimit(world)) return false;
   if (kind === "warden" && hasKind(enemies, spawner.pending, "warden")) return false;
   if (kind === "champion" && championQueued(enemies, spawner.pending) >= championCap(world.levelNum, heatLevel(world))) {
@@ -140,21 +159,28 @@ export function queueSpawn(spawner, world, kind = "grunt", den = null, force = f
     event: kind === "champion",
   };
   spawner.pending.push(job);
+  spawner.total += 1;
   return true;
 }
 
 export function queuePack(spawner, world, kind = "grunt") {
-  const escorts = escortCount(kind);
+  const boss = bossJob(world, kind);
+  let escorts = escortCount(kind);
+  if (isStrongKind(kind) && !boss && capLeft(spawner) < 1 + escorts) {
+    if (kind === "warden" || kind === "champion") return false;
+    kind = "grunt";
+    escorts = 0;
+  }
   const used = aliveCount(world.enemies) + spawner.pending.length;
   const limit = aliveLimit(world);
   if (used >= limit && !isStrongKind(kind)) return false;
   if (isStrongKind(kind) && used + 1 + Math.min(1, escorts) > limit + 2) return false;
   const den = pickSpawnDen(world.sheet, spawner.pending, world.enemies);
-  if (!queueSpawn(spawner, world, kind, den)) return false;
+  if (!queueSpawn(spawner, world, kind, den, false, boss)) return false;
   const job = spawner.pending[spawner.pending.length - 1];
   const nest = job?.den || den;
   for (let i = 0; i < escorts; i++) {
-    if (!queueSpawn(spawner, world, "grunt", nest, true)) break;
+    if (!queueSpawn(spawner, world, "grunt", nest, true, boss)) break;
     spawner.pending[spawner.pending.length - 1].charge = -0.22 * (i + 1);
   }
   return true;
@@ -178,7 +204,7 @@ function seedA1(spawner, world) {
     chosen.push(den);
   }
   chosen.forEach((den, index) => {
-    const kind = index === 2 ? pickSpawnKind(world.levelNum) : "grunt";
+    const kind = index === 2 && capLeft(spawner) >= 2 ? pickSpawnKind(world.levelNum) : "grunt";
     if (!queueSpawn(spawner, world, kind, den, true)) return;
     den.ambushed = true;
     if (isStrongKind(kind)) queueSpawn(spawner, world, "grunt", den, true);
@@ -199,7 +225,8 @@ function tickA1Ambush(spawner, world) {
       den.ambushed = true;
       continue;
     }
-    const kind = Math.random() < 0.22 ? pickSpawnKind(world.levelNum) : "grunt";
+    const kind =
+      capLeft(spawner) >= 2 && Math.random() < 0.22 ? pickSpawnKind(world.levelNum) : "grunt";
     if (!queueSpawn(spawner, world, kind, den)) continue;
     den.ambushed = true;
     if (isStrongKind(kind)) queueSpawn(spawner, world, "grunt", den, true);
@@ -208,7 +235,7 @@ function tickA1Ambush(spawner, world) {
 }
 
 export function beginSheetSpawns(spawner, world) {
-  resetSpawner(spawner);
+  resetSpawner(spawner, world.levelNum);
   if (isA1(world.sheet)) {
     seedA1(spawner, world);
     spawner.timer = 6 * heatPace(heatLevel(world));

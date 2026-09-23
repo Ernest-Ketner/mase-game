@@ -137,8 +137,10 @@ function pickWeighted(list, rng, lowLife = false) {
 
 export function pickOffers(run, count = 2, rng = Math.random, opts = {}) {
   const lowLife = !!opts.lowLife;
-  const pool = UPGRADE_CATALOG.filter((u) => isAvailable(run, u));
-  if (pool.length === 0) return [];
+  const all = UPGRADE_CATALOG.filter((u) => isAvailable(run, u));
+  const exclude = new Set(opts.exclude || []);
+  const pool = all.filter((u) => !exclude.has(u.id));
+  if (pool.length === 0 && all.length === 0) return [];
   const syn = new Set(weaponSyn(run));
   const synergy = pool.filter((u) => u.syn && syn.has(u.syn) && !u.weapon);
   const life = pool.filter((u) => LIFE_IDS.has(u.id));
@@ -159,6 +161,13 @@ export function pickOffers(run, count = 2, rng = Math.random, opts = {}) {
   while (picks.length < Math.min(count, pool.length) && guard < 40) {
     guard += 1;
     const rest = pool.filter((u) => !used.has(u.id));
+    if (rest.length === 0) break;
+    take(pickWeighted(rest, rng, lowLife));
+  }
+  guard = 0;
+  while (picks.length < Math.min(count, all.length) && guard < 40) {
+    guard += 1;
+    const rest = all.filter((u) => !used.has(u.id));
     if (rest.length === 0) break;
     take(pickWeighted(rest, rng, lowLife));
   }
