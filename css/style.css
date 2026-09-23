@@ -182,13 +182,22 @@ body:not(.in-menu) #game {
   text-align: left;
   white-space: pre-line;
   max-width: 88%;
-  max-height: 52%;
+  max-height: 36%;
   overflow: auto;
   margin: 0;
   line-height: 1.35;
 }
 
 .pause-notes.hidden {
+  display: none;
+}
+
+#pause-quit {
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+
+#pause-quit.hidden {
   display: none;
 }
 

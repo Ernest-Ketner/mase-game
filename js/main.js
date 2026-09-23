@@ -204,6 +204,7 @@ function hidePanels() {
   }
   if (eventContinue) eventContinue.classList.add("hidden");
   document.getElementById("sound-panel")?.classList.add("hidden");
+  document.getElementById("pause-quit")?.classList.add("hidden");
   document.getElementById("options-panel")?.classList.add("hidden");
 }
 
@@ -1264,7 +1265,13 @@ function updateHud() {
     return;
   }
   if (lost) {
-    setStatus(`Попал под лазер · уровень ${levelNum} · рекорд ${bestSheet()}`);
+    const why =
+      lastHurtCause === "time"
+        ? "Время вышло"
+        : lastHurtCause === "quit"
+          ? "Вышел с листа"
+          : "Попал под лазер";
+    setStatus(`${why} · уровень ${levelNum} · рекорд ${bestSheet()}`);
     return;
   }
   if (upgradeOffers) {
@@ -1372,17 +1379,16 @@ function tryAdvance() {
   goNextSheet();
 }
 
-function tryLose() {
-  if (lost || player.hp > 0) return;
+function showDefeat(cause, sound = true) {
+  if (lost) return;
   lost = true;
   paused = false;
   rememberBest();
-  sfx.die();
+  if (sound) sfx.die();
   hideUpgradeSelect();
   hidePanels();
   setMenuChrome(false);
   overlayEl.classList.add("is-defeat");
-  const cause = lastHurtCause === "time" ? "Время вышло" : "Попал под лазер";
   showOverlay("Поражение", `${cause} · лист ${levelNum} · рекорд ${bestSheet()}`);
   if (deathBuild) fillBuildBlock(
     deathBuild,
@@ -1394,6 +1400,18 @@ function tryLose() {
   if (deathPanel) deathPanel.classList.remove("hidden");
   fitDeathBuild();
   updateHud();
+}
+
+function tryLose() {
+  if (lost || player.hp > 0) return;
+  const cause = lastHurtCause === "time" ? "Время вышло" : "Попал под лазер";
+  showDefeat(cause);
+}
+
+function quitLevel() {
+  if (mode !== "play" || lost) return;
+  lastHurtCause = "quit";
+  showDefeat("Вышел с листа", false);
 }
 
 function tickObjective(dt) {
@@ -1493,6 +1511,7 @@ function togglePause() {
       pauseNotes.classList.remove("hidden");
     }
     showSoundPanel();
+    document.getElementById("pause-quit")?.classList.remove("hidden");
   } else {
     hideOverlay();
   }
@@ -1868,6 +1887,7 @@ document.getElementById("menu-back")?.addEventListener("click", () => showMenu("
 document.getElementById("death-retry")?.addEventListener("click", () => startGame());
 document.getElementById("death-new")?.addEventListener("click", () => startFreshSeed());
 document.getElementById("death-menu")?.addEventListener("click", () => goToMenu());
+document.getElementById("pause-quit")?.addEventListener("click", () => quitLevel());
 
 bindAudioUnlock();
 

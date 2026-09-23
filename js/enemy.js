@@ -28,6 +28,7 @@ const TRAVEL_CHANCE = 0.22;
 const ABORT_CHASE_CHANCE = 0.08;
 const ABORT_CHECK_EVERY = 1.4;
 const LOSE_SIGHT_TIME = 2.2;
+const AIM_HOLD = 1;
 
 const SHIELD_DURATION = 3;
 const TIRED_DURATION = 10;
@@ -215,6 +216,39 @@ function canSeePlayer(enemy, player, grid, visionRange = VISION_RANGE) {
   const dist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
   if (dist > visionRange) return false;
   return hasLineOfSight(grid, enemy.x, enemy.y, player.x, player.y);
+}
+
+function shotLineClear(grid, x1, y1, x2, y2) {
+  const dist = Math.hypot(x2 - x1, y2 - y1);
+  if (dist < 1) return true;
+  const step = CELL * 0.35;
+  const n = Math.max(1, Math.ceil(dist / step));
+  for (let i = 1; i < n; i++) {
+    const t = i / n;
+    const cell = worldToCell(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t);
+    if (!isFloor(grid, cell.c, cell.r)) return false;
+  }
+  return true;
+}
+
+function holdsAim(enemy, player, grid, dt, visionRange) {
+  const sees =
+    canSeePlayer(enemy, player, grid, visionRange) &&
+    shotLineClear(grid, enemy.x, enemy.y, player.x, player.y);
+  if (sees) enemy.aimTime = Math.min(AIM_HOLD, (enemy.aimTime || 0) + dt);
+  else enemy.aimTime = 0;
+  enemy.aimReady = sees && enemy.aimTime >= AIM_HOLD;
+  return enemy.aimReady;
+}
+
+function visionOf(enemy, opts) {
+  const kind = kindStats(enemy.kind);
+  return (
+    VISION_RANGE *
+    (opts.visionMult ?? 1) *
+    kind.visionMult *
+    (opts.huntMode ? VISION_HUNT_MULT : 1)
+  );
 }
 
 function zoneIndexAt(zones, c, r) {
@@ -578,6 +612,8 @@ function returnToPatrol(enemy, grid, zones) {
   enemy.alert = false;
   enemy.mode = "patrol";
   enemy.loseSight = 0;
+  enemy.aimTime = 0;
+  enemy.aimReady = false;
   enemy.abortTimer = ABORT_CHECK_EVERY;
   enemy.goalCell = null;
   clearStep(enemy);
@@ -798,6 +834,11 @@ function useChampionAbility(enemy, player, fired, dt, grid) {
   enemy.abilityIndex = (enemy.abilityIndex + 1) % list.length;
   enemy.abilityTimer = 2.2 + Math.random() * 1.1;
   if (ab === "burst") {
+    if (!enemy.aimReady || !shotLineClear(grid, enemy.x, enemy.y, player.x, player.y)) {
+      enemy.abilityIndex = (enemy.abilityIndex - 1 + list.length) % list.length;
+      enemy.abilityTimer = 0.2;
+      return;
+    }
     fireVolley(enemy, player, fired, 3, grid);
     enemy.shootCooldown = Math.max(enemy.shootCooldown, 0.9);
   } else if (ab === "shield") {
@@ -823,7 +864,8 @@ function useChampionAbility(enemy, player, fired, dt, grid) {
 
 function tryShootIfAlert(enemy, player, grid, dt, fired, opts = {}) {
   enemy.shootCooldown = Math.max(0, enemy.shootCooldown - dt);
-  if (!enemy.alert || enemy.shootCooldown > 0) return;
+  if (!enemy.alert || enemy.shootCooldown > 0 || !enemy.aimReady) return;
+  if (!shotLineClear(grid, enemy.x, enemy.y, player.x, player.y)) return;
   const huntMode = opts.huntMode === true;
   const kind = kindStats(enemy.kind);
   const vision =
@@ -864,6 +906,8 @@ export function spawnEnemy(spawn, maxHp, kind = "grunt", homeZone = 0, extras = 
     loseSight: 0,
     abortTimer: ABORT_CHECK_EVERY,
     shootCooldown: ENEMY_FIRE_MIN + Math.random() * (ENEMY_FIRE_MAX - ENEMY_FIRE_MIN),
+    aimTime: 0,
+    aimReady: false,
     hp: maxHp,
     maxHp,
     plates: stats.plates,
@@ -928,6 +972,7 @@ export function hurtEnemy(enemy) {
 }
 
 function updateWarden(enemy, grid, walls, player, shots, zones, dt, fired, opts) {
+  holdsAim(enemy, player, grid, dt, visionOf(enemy, opts));
   if (enemy.tiredTimer > 0) {
     enemy.tiredTimer = Math.max(0, enemy.tiredTimer - dt);
     enemy.moving = false;
@@ -944,13 +989,15 @@ function updateWarden(enemy, grid, walls, player, shots, zones, dt, fired, opts)
   }
 
   if (enemy.pendingCounter) {
+    if (!enemy.aimReady || !shotLineClear(grid, enemy.x, enemy.y, player.x, player.y)) {
+      updateMovement(enemy, grid, walls, player, shots, zones, dt, opts);
+      return;
+    }
     enemy.pendingCounter = false;
-    if (enemy.alert) {
-      const shot = fireAt(enemy, player, grid);
-      if (shot) {
-        enemy.noiseTimer = 0.45;
-        fired.push(shot);
-      }
+    const shot = fireAt(enemy, player, grid);
+    if (shot) {
+      enemy.noiseTimer = 0.45;
+      fired.push(shot);
     }
     enemy.tiredTimer = TIRED_DURATION;
     enemy.shootCooldown = TIRED_DURATION;
@@ -972,6 +1019,7 @@ function updateWarden(enemy, grid, walls, player, shots, zones, dt, fired, opts)
 }
 
 function updateChampion(enemy, grid, walls, player, shots, zones, dt, fired, opts) {
+  holdsAim(enemy, player, grid, dt, visionOf(enemy, opts));
   if (enemy.guarding && enemy.shieldTimer > 0) {
     enemy.shieldTimer = Math.max(0, enemy.shieldTimer - dt);
     if (enemy.shieldTimer === 0) enemy.guarding = false;
@@ -990,6 +1038,7 @@ function updateChampion(enemy, grid, walls, player, shots, zones, dt, fired, opt
 }
 
 function updateGrunt(enemy, grid, walls, player, shots, zones, dt, fired, opts) {
+  holdsAim(enemy, player, grid, dt, visionOf(enemy, opts));
   updateMovement(enemy, grid, walls, player, shots, zones, dt, opts);
   tryShootIfAlert(enemy, player, grid, dt, fired, opts);
 }
