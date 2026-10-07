@@ -241,7 +241,11 @@ function hidePanels() {
   document.getElementById("sound-panel")?.classList.add("hidden");
   document.getElementById("pause-quit")?.classList.add("hidden");
   document.getElementById("options-panel")?.classList.add("hidden");
-  document.getElementById("notebook-panel")?.classList.add("hidden");
+  const notebook = document.getElementById("notebook-panel");
+  if (notebook) {
+    notebook.classList.add("hidden");
+    notebook.hidden = true;
+  }
 }
 
 function syncSoundButtons() {
@@ -717,7 +721,11 @@ function showMenu(screen = "root") {
   }
   if (screen === "notebook") {
     showOverlay("Тетрадь", `золото ${getGold()}`);
-    document.getElementById("notebook-panel")?.classList.remove("hidden");
+    const notebook = document.getElementById("notebook-panel");
+    if (notebook) {
+      notebook.hidden = false;
+      notebook.classList.remove("hidden");
+    }
     paintNotebook();
     return;
   }
