@@ -8,10 +8,12 @@ import {
   COLS,
   ROWS,
   TARGET_COUNT,
+  sheetDims,
+  sheetScale,
 } from "../js/maze.js";
 import { mulberry32 } from "../js/seed.js";
 import { createSpawner, beginSheetSpawns, tickSpawner, sheetEnemyCap } from "../js/spawn.js";
-import { killQuota } from "../js/objectives.js";
+import { killQuota, pickSheetObjective } from "../js/objectives.js";
 
 const SEEDS = [1, 7, 42, 99, 2026, 314159, 777, 12345];
 
@@ -28,10 +30,47 @@ function solidRect(grid, c0, r0, c1, r1) {
   return true;
 }
 
-function checkLevel(seed, tagId = null) {
+const DOOR_STATS = { rooms: 0, tidy: 0 };
+
+/** Двери комнаты — связные куски пола в кольце клеток вокруг неё. */
+function doorsOf(grid, den) {
+  const c0 = den.origin.c - 1;
+  const r0 = den.origin.r - 1;
+  const c1 = den.origin.c + den.w;
+  const r1 = den.origin.r + den.h;
+  const ring = [];
+  for (let c = c0 + 1; c < c1; c++) ring.push([c, r0], [c, r1]);
+  for (let r = r0 + 1; r < r1; r++) ring.push([c0, r], [c1, r]);
+  const open = new Set(ring.filter(([c, r]) => isFloor(grid, c, r)).map(([c, r]) => `${c},${r}`));
+  const seen = new Set();
+  let doors = 0;
+  for (const key of open) {
+    if (seen.has(key)) continue;
+    doors += 1;
+    const stack = [key];
+    seen.add(key);
+    while (stack.length > 0) {
+      const [c, r] = stack.pop().split(",").map(Number);
+      for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const k = `${c + dc},${r + dr}`;
+        if (open.has(k) && !seen.has(k)) {
+          seen.add(k);
+          stack.push(k);
+        }
+      }
+    }
+  }
+  return doors;
+}
+
+function checkLevel(seed, tagId = null, levelNum = 1) {
+  const T0 = performance.now();
   const rng = mulberry32(seed);
-  const level = generateLevel(rng, { seed, tag: tagId });
-  const label = tagId ? `${seed}/${tagId}` : `${seed}`;
+  const level = generateLevel(rng, { seed, tag: tagId, levelNum });
+  const label = `${seed}${tagId ? `/${tagId}` : ""}${levelNum > 1 ? `@${levelNum}` : ""}`;
+  const dims = sheetDims(levelNum);
+  assert(level.cols === dims.cols && level.rows === dims.rows, `seed ${label}: size ${level.cols}×${level.rows}`);
+  assert(level.grid.length === ROWS && level.grid[0].length === COLS, `seed ${label}: grid mismatch`);
   assert(level.targets.length === TARGET_COUNT, `seed ${label}: targets ${level.targets.length}`);
   assert(level.start.r < 8 && level.start.c < 12, `seed ${label}: entry not top-left-ish`);
   const exits = level.exits?.length ? level.exits : [{ kind: "exit", approach: level.exit }];
@@ -91,40 +130,52 @@ function checkLevel(seed, tagId = null) {
   }
   assert(isFloor(level.grid, level.start.c, level.start.r), `seed ${label}: start buried in ink`);
   if (tagId === "arena") {
-    assert(solidRect(level.grid, 10, 14, 21, 25), `seed ${label}: arena plaza missing`);
-  }
-  if (tagId === "a1") {
-    assert(level.cols === 132 && level.rows === 164, `seed ${label}: A1 size ${level.cols}×${level.rows}`);
-    assert(level.grid.length === 164 && level.grid[0].length === 132, `seed ${label}: A1 grid mismatch`);
-    assert(isFloor(level.grid, 66, 84), `seed ${label}: A1 plaza missing`);
-    assert((level.spawnDens?.length || 0) >= 12, `seed ${label}: A1 dens ${level.spawnDens?.length || 0}`);
-    assert(
-      level.spawnDens.some((den) => den.kind === "camp"),
-      `seed ${label}: A1 camps missing`,
-    );
+    const cc = Math.floor(COLS / 2);
+    const rc = Math.floor(ROWS / 2);
+    assert(solidRect(level.grid, cc - 5, rc - 5, cc + 4, rc + 4), `seed ${label}: arena plaza missing`);
   }
   if (tagId === "margin") {
     assert(isFloor(level.grid, 3, 1), `seed ${label}: margin ring missing`);
     assert(isFloor(level.grid, 1, 3), `seed ${label}: margin ring missing`);
   }
   if (tagId === "fold") {
+    const foldBc = Math.floor(Math.floor((COLS - 4) / 3 + 1) * 0.45);
+    const foldCol = 3 * (foldBc + 1);
+    const bayRows = Math.floor((ROWS - 4) / 3) + 1;
+    const gateRows = [Math.floor(bayRows * 0.2), Math.floor(bayRows * 0.72)].map((br) => 1 + br * 3);
     let walls = 0;
     let sampled = 0;
     for (let r = 1; r < ROWS - 1; r++) {
       sampled += 1;
-      if (!isFloor(level.grid, 15, r)) walls += 1;
+      if (!isFloor(level.grid, foldCol, r)) walls += 1;
     }
     assert(walls / sampled >= 0.7, `seed ${label}: fold too open ${walls}/${sampled}`);
-    assert(isFloor(level.grid, 15, 7) && isFloor(level.grid, 15, 28), `seed ${label}: fold gates closed`);
+    assert(
+      gateRows.every((r) => isFloor(level.grid, foldCol, r)),
+      `seed ${label}: fold gates closed`,
+    );
   }
-  return { seed: label, floors, blocks, dens: level.spawnDens?.length || 0 };
+  const rooms = (level.spawnDens || []).filter((den) => den.kind === "room");
+  if (!["arena", "margin", "fold"].includes(tagId) && rooms.length > 0) {
+    const doors = rooms.map((den) => doorsOf(level.grid, den));
+    const bad = rooms.find((den, i) => doors[i] < 1 || doors[i] > 4);
+    assert(!bad, `seed ${label}: room at ${bad?.origin.c},${bad?.origin.r} ${bad?.w}×${bad?.h} doors ${doors.join(",")}`);
+    DOOR_STATS.rooms += rooms.length;
+    DOOR_STATS.tidy += doors.filter((d) => d <= 2).length;
+  }
+  if (levelNum >= 8) {
+    const minDens = Math.round(8 * (COLS / 33));
+    assert((level.spawnDens?.length || 0) >= minDens, `seed ${label}: dens ${level.spawnDens?.length || 0} < ${minDens}`);
+  }
+  return { seed: label, floors, blocks, dens: level.spawnDens?.length || 0, ms: Math.round(performance.now() - T0) };
 }
 
-const TAGS = ["arena", "a1", "fold", "margin", "draft", "rooms", "narrow", "gate"];
+const TAGS = ["arena", "fold", "margin", "draft", "rooms", "narrow", "gate"];
+const GROWTH = [2, 5, 8, 12, 16, 20, 25];
 
 /** Прогон спавнера на листе: всех сразу «убиваем», чтобы упираться только в лимит листа. */
 function simulateSpawns(levelNum, objective, tagId = null) {
-  const level = generateLevel(mulberry32(levelNum * 131 + 5), { tag: tagId, seed: levelNum });
+  const level = generateLevel(mulberry32(levelNum * 131 + 5), { tag: tagId, seed: levelNum, levelNum });
   level.objective = objective;
   const spawner = createSpawner();
   let spawned = 0;
@@ -168,10 +219,34 @@ function checkSpawnCaps() {
     }
     lines.push(`sheet ${n}: cap ${cap} spawned ${plain.spawned}`);
   }
-  const a1 = simulateSpawns(5, "marks", "a1");
-  assert(a1.spawned <= a1.cap, `a1: spawned ${a1.spawned} > cap ${a1.cap}`);
-  lines.push(`a1 sheet 5: cap ${a1.cap} spawned ${a1.spawned}`);
   return lines;
+}
+
+function checkGrowth() {
+  let prev = 0;
+  for (let n = 1; n <= 30; n++) {
+    const { cols, rows } = sheetDims(n);
+    assert(cols >= prev, `sheet ${n}: field shrank ${cols} < ${prev}`);
+    assert(n < 20 || (cols === 132 && rows === 164), `sheet ${n}: not A1 ${cols}×${rows}`);
+    prev = cols;
+  }
+  assert(sheetDims(1).cols === 33 && sheetDims(1).rows === 41, "sheet 1: not 33×41");
+  let pass = 0;
+  let bigSheets = 0;
+  for (let seed = 1; seed <= 400; seed++) {
+    for (let n = 2; n <= 30; n++) {
+      const id = pickSheetObjective(n, seed).id;
+      if (sheetScale(n) < 2) {
+        assert(id !== "pass", `sheet ${n} seed ${seed}: pass on small sheet`);
+        continue;
+      }
+      bigSheets += 1;
+      if (id === "pass") pass += 1;
+    }
+  }
+  const share = pass / bigSheets;
+  assert(share > 0.02 && share < 0.09, `pass share ${share.toFixed(3)}`);
+  return `growth ok, pass ${(share * 100).toFixed(1)}% on big sheets`;
 }
 
 export function runInvariants() {
@@ -180,15 +255,22 @@ export function runInvariants() {
   for (const tagId of TAGS) {
     for (const seed of SEEDS) results.push(checkLevel(seed + tagId.length * 17, tagId));
   }
+  for (const n of GROWTH) {
+    for (const seed of SEEDS.slice(0, 3)) results.push(checkLevel(seed + n * 7, null, n));
+    for (const tagId of TAGS) results.push(checkLevel(n * 31 + tagId.length, tagId, n));
+  }
+  const share = DOOR_STATS.tidy / Math.max(1, DOOR_STATS.rooms);
+  assert(share >= 0.95, `rooms with 1–2 doors ${(share * 100).toFixed(1)}%`);
   return results;
 }
 
 function main() {
   const results = runInvariants();
   for (const r of results) {
-    console.log(`ok seed ${r.seed} floors ${r.floors} dens ${r.dens}`);
+    console.log(`ok seed ${r.seed} floors ${r.floors} dens ${r.dens} ${r.ms}ms`);
   }
   console.log(`passed ${results.length} seeds`);
+  console.log(`ok ${checkGrowth()}`);
   for (const line of checkSpawnCaps()) console.log(`ok ${line}`);
 }
 

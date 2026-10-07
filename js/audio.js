@@ -235,6 +235,10 @@ export const sfx = {
   enemyShoot() {
     beep(240, 0.08, "sawtooth", 0.035, -80);
   },
+  shout() {
+    beep(560, 0.08, "square", 0.05, 220);
+    beep(340, 0.16, "sawtooth", 0.045, -140);
+  },
   bounce() {
     beep(680, 0.05, "triangle", 0.045, 120);
   },

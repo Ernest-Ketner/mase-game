@@ -129,6 +129,18 @@ export function createInput(canvas) {
     return mute;
   }
 
+  let dashLatch = false;
+
+  function consumeDash() {
+    const down = keys.has("ShiftLeft") || keys.has("ShiftRight");
+    if (down && !dashLatch) {
+      dashLatch = true;
+      return true;
+    }
+    if (!down) dashLatch = false;
+    return false;
+  }
+
   function isShootHeld() {
     return mouse.down || keys.has("Space");
   }
@@ -142,6 +154,7 @@ export function createInput(canvas) {
     consumeChoice,
     consumeConfirm,
     consumeMute,
+    consumeDash,
     isShootHeld,
   };
 }

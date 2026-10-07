@@ -1,4 +1,4 @@
-import { CELL, COLS, MARGIN, ROWS, worldToCell, gateSpan } from "./maze.js";
+import { CELL, COLS, MARGIN, ROWS, worldToCell, gateSpan, isWall } from "./maze.js";
 
 const EPS = 1e-6;
 const SKIN = 0.08;
@@ -215,7 +215,7 @@ function clampToField(player, field) {
   }
 
   const exitGates = field?.exits?.length
-    ? field.exits.map((ex) => ex.gate)
+    ? field.exits.filter((ex) => !ex.blocked).map((ex) => ex.gate)
     : field?.exitGate
       ? [field.exitGate]
       : [];
@@ -235,30 +235,62 @@ function clampToField(player, field) {
   player.y = Math.max(top, Math.min(bottom, player.y));
 }
 
-export function updatePlayer(player, input, walls, dt, locked, grid = null, field = null) {
+export function startDash(player, input) {
+  const move = input.axis();
+  let dx = move.x;
+  let dy = move.y;
+  if (dx === 0 && dy === 0) {
+    dx = Math.cos(player.angle);
+    dy = Math.sin(player.angle);
+  }
+  player.dashDx = dx;
+  player.dashDy = dy;
+  player.dashTimer = 0.12;
+  player.dashCd = 1.4;
+}
+
+function besideWall(player, grid) {
+  const cell = worldToCell(player.x, player.y);
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (dc === 0 && dr === 0) continue;
+      if (isWall(grid, cell.c + dc, cell.r + dr)) return true;
+    }
+  }
+  return false;
+}
+
+export function updatePlayer(player, input, walls, dt, locked, grid = null, field = null, opts = {}) {
   if (!locked && player.invuln > 0) player.invuln = Math.max(0, player.invuln - dt);
   if (locked) {
     player.moving = false;
     return;
   }
+  if (player.dashCd > 0) player.dashCd = Math.max(0, player.dashCd - dt);
 
-  const mx = input.mouse.wx ?? input.mouse.x;
-  const my = input.mouse.wy ?? input.mouse.y;
-  const aimX = mx - player.x;
-  const aimY = my - player.y;
+  const mxAim = input.mouse.wx ?? input.mouse.x;
+  const myAim = input.mouse.wy ?? input.mouse.y;
+  const aimX = mxAim - player.x;
+  const aimY = myAim - player.y;
   if (aimX !== 0 || aimY !== 0) {
     player.angle = Math.atan2(aimY, aimX);
   }
 
   const move = input.axis();
-  player.moving = move.x !== 0 || move.y !== 0;
+  let mx = move.x;
+  let my = move.y;
+  if ((player.dashTimer || 0) > 0) {
+    mx = player.dashDx || 0;
+    my = player.dashDy || 0;
+  }
+  player.moving = mx !== 0 || my !== 0;
   if (player.moving) player.walkTime += dt;
   else player.walkTime = 0;
 
-  const dx = move.x * player.speed * dt;
-  const dy = move.y * player.speed * dt;
-  player.x += dx;
-  player.y += dy;
+  let speed = player.speed;
+  if ((opts.wallSlide || 0) > 1 && grid && besideWall(player, grid)) speed *= opts.wallSlide;
+  player.x += mx * speed * dt;
+  player.y += my * speed * dt;
 
   const resolved = grid
     ? depenetrateGrid(player.x, player.y, player.radius, grid)
@@ -268,11 +300,14 @@ export function updatePlayer(player, input, walls, dt, locked, grid = null, fiel
   clampToField(player, field);
   unstick(player, walls, grid);
   clampToField(player, field);
+  if (player.dashTimer > 0) player.dashTimer = Math.max(0, player.dashTimer - dt);
+  if (player.rushTimer > 0) player.rushTimer = Math.max(0, player.rushTimer - dt);
 }
 
 export function hurtPlayer(player, run = null) {
   if (!player || player.hp <= 0) return "dead";
   if (player.invuln > 0) return "block";
+  if ((run?.mods?.dodgeChance || 0) > 0 && Math.random() < run.mods.dodgeChance) return "dodge";
   const invulnTime = Math.max(0.85, Number(run?.mods?.invulnTime) || 1);
   if ((player.shieldCharges ?? 0) > 0) {
     player.shieldCharges -= 1;

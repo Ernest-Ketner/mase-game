@@ -115,9 +115,9 @@ export function createWeapon() {
   return { cooldown: 0, heat: 0, overheated: false };
 }
 
-export function updateWeapon(weapon, dt) {
+export function updateWeapon(weapon, dt, mods = null) {
   if (weapon.cooldown > 0) weapon.cooldown = Math.max(0, weapon.cooldown - dt);
-  const cool = weapon.overheated ? 0.42 : 0.2;
+  const cool = (weapon.overheated ? 0.42 : 0.2) * (mods?.coolMult || 1);
   if (weapon.heat > 0) weapon.heat = Math.max(0, weapon.heat - cool * dt);
   if (weapon.overheated && weapon.heat <= 0.18) weapon.overheated = false;
 }
@@ -148,6 +148,7 @@ export function createShot(origin, dir, team, extras = {}) {
     seek: extras.seek === true,
     split: extras.split === true,
     fogCut: extras.fogCut === true,
+    wallPierce: extras.wallPierce || 0,
     inkDrop: extras.inkDrop === true,
     child: extras.child === true,
     bounced: false,
@@ -176,7 +177,7 @@ function makePlayerShot(origin, angle, run, wpn, extras = {}) {
       seek: !!run.mods.bounceSeek && !extras.child,
       split: !!run.mods.bounceSplit && !extras.child,
       fogCut: !!run.mods.fogCut,
-      inkDrop: !!run.mods.inkPool && run.weaponId === "wpn_shotgun",
+      wallPierce: extras.child ? 0 : (run.mods.wallPierce || 0),
       child: extras.child === true,
     },
   );
@@ -193,15 +194,19 @@ export function tryFirePlayer(weapon, origin, dir, run, wpn, extras = {}) {
     if (!Number.isFinite(run.ammo) || run.ammo <= 0) return null;
   }
 
-  const burst = run.mods.smgBurst && run.weaponId === "wpn_smg" && run.ammo >= 2;
-  if (usesAmmo) {
-    run.ammo -= burst && run.ammo >= 2 ? 2 : 1;
+  const long = !!(run.mods.smgLong && run.weaponId === "wpn_smg" && run.ammo >= 2);
+  const burst = !!(run.mods.smgBurst && run.weaponId === "wpn_smg" && run.ammo >= 2);
+  const volley = long || burst;
+  const saved = usesAmmo && (run.mods.ammoSave || 0) > 0 && Math.random() < run.mods.ammoSave;
+  if (usesAmmo && !saved) {
+    run.ammo -= volley ? 2 : 1;
   }
 
   weapon.cooldown = wpn.cooldown * run.mods.cooldownMult;
+  if (run.weaponId === "wpn_pierce") weapon.cooldown *= run.mods.pierceCdMult || 1;
   if (run.mods.lastStand && extras.lowHp) weapon.cooldown *= 0.8;
   if (run.weaponId === "wpn_laser") {
-    weapon.heat = Math.min(1, (weapon.heat || 0) + 0.34);
+    weapon.heat = Math.min(1, (weapon.heat || 0) + 0.34 * (run.mods.heatMult ?? 1));
     if (weapon.heat >= 1) {
       weapon.heat = 1;
       weapon.overheated = true;
@@ -209,10 +214,17 @@ export function tryFirePlayer(weapon, origin, dir, run, wpn, extras = {}) {
   }
   const baseAngle = aimJitter(
     Math.atan2(dir.y, dir.x),
-    playerFireSpread(!!extras.moving, run.mods.moveAcc || 0),
+    playerFireSpread(!!extras.moving, run.mods.moveAcc || 0) * (run.mods.moveSpreadMult || 1),
   );
-  const pellets = burst ? 3 : Math.max(1, wpn.pellets || 1);
-  const spread = burst ? 0.09 : wpn.spread || 0;
+  let pellets = Math.max(1, (wpn.pellets || 1) + (run.weaponId === "wpn_shotgun" ? (run.mods.pelletBonus || 0) : 0));
+  let spread = (wpn.spread || 0) * (run.mods.spreadMult || 1);
+  if (long) {
+    pellets = 5;
+    spread = 0.14;
+  } else if (burst) {
+    pellets = 3;
+    spread = 0.09;
+  }
   const shots = [];
   for (let i = 0; i < pellets; i++) {
     let angle = baseAngle;
@@ -230,10 +242,12 @@ export function tryFirePlayer(weapon, origin, dir, run, wpn, extras = {}) {
     }
   }
 
-  if (run.mods.firstShot && run.firstShotPending) {
+  if (run.firstShotPending && (run.mods.firstShot || run.mods.firstShotDamage)) {
     run.firstShotPending = false;
-    weapon.cooldown = 0;
-    for (const shot of shots) shot.damage = (shot.damage || 1) + 1;
+    if (run.mods.firstShot) weapon.cooldown = 0;
+    if (run.mods.firstShotDamage) {
+      for (const shot of shots) shot.damage = (shot.damage || 1) + 1;
+    }
   }
 
   return shots;
@@ -315,6 +329,14 @@ export function updateShot(shot, walls, bounds, dt) {
     rememberSweep(shot);
     remaining -= hit.t;
     if (shot.bounces >= maxBounces) {
+      if ((shot.wallPierce || 0) > 0) {
+        shot.wallPierce -= 1;
+        shot.x += shot.dx * 22;
+        shot.y += shot.dy * 22;
+        shot.lastWallId = hit.wall.id;
+        rememberSweep(shot);
+        continue;
+      }
       shot.alive = false;
       break;
     }

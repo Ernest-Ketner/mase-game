@@ -50,6 +50,7 @@
           <button type="button" class="menu-btn hidden" id="event-continue">Дальше</button>
           <div id="menu-panel" class="menu-panel">
             <button type="button" class="menu-btn" id="menu-play">Играть</button>
+            <button type="button" class="menu-btn" id="menu-notebook">Тетрадь</button>
             <button type="button" class="menu-btn" id="menu-controls">Управление</button>
             <button type="button" class="menu-btn" id="menu-about">Об игре</button>
             <button type="button" class="menu-btn" id="menu-record">Рекорд</button>
@@ -58,6 +59,12 @@
           <div id="options-panel" class="menu-panel hidden">
             <button type="button" class="menu-btn sound-btn" id="opt-music">Музыка: вкл</button>
             <button type="button" class="menu-btn sound-btn" id="opt-sfx">Звуки: вкл</button>
+            <button type="button" class="menu-btn" id="opt-reset">Сбросить прогресс</button>
+            <div id="opt-reset-ask" class="reset-ask hidden">
+              <p>Стереть покупки и счёт? Золото останется.</p>
+              <button type="button" class="menu-btn" id="opt-reset-yes">Стереть</button>
+              <button type="button" class="menu-btn" id="opt-reset-no">Нет</button>
+            </div>
             <button type="button" class="menu-btn" id="options-back">Назад</button>
           </div>
           <div id="seed-panel" class="menu-panel hidden">
@@ -66,6 +73,18 @@
             <p id="seed-weapon" class="seed-weapon"></p>
             <button type="button" class="menu-btn" id="seed-go">Начать</button>
             <button type="button" class="menu-btn" id="seed-back">Назад</button>
+          </div>
+          <div id="notebook-panel" class="notebook hidden">
+            <div class="notebook-tabs" id="notebook-tabs">
+              <button type="button" class="nb-tab is-on" data-page="0">Скины</button>
+              <button type="button" class="nb-tab" data-page="1">Стволы</button>
+              <button type="button" class="nb-tab" data-page="2">Способности</button>
+              <button type="button" class="nb-tab" data-page="3">Счёт</button>
+            </div>
+            <div class="notebook-stage">
+              <div id="notebook-leaf" class="notebook-leaf"></div>
+            </div>
+            <button type="button" class="menu-btn" id="notebook-back">В меню</button>
           </div>
           <div id="menu-page" class="menu-page hidden">
             <p id="menu-page-text" class="menu-page-text"></p>

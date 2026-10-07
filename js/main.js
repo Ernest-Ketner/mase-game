@@ -5,7 +5,7 @@ import {
   MARGIN,
   COLS,
   ROWS,
-  A1_SCALE,
+  sheetScale,
   sealEntryGate,
   openExitGate,
   updateGates,
@@ -15,8 +15,9 @@ import {
   SHEET_TAGS,
   exitKindAtPoint,
   clearShotOrigin,
+  blockExit,
 } from "./maze.js";
-import { createPlayer, updatePlayer, muzzlePoint, hurtPlayer, healPlayer, grantInvuln } from "./player.js";
+import { createPlayer, updatePlayer, muzzlePoint, hurtPlayer, healPlayer, grantInvuln, startDash } from "./player.js";
 import {
   createWeapon,
   updateWeapon,
@@ -31,7 +32,7 @@ import {
 import { createInput } from "./input.js";
 import { setupCanvas, drawFrame } from "./render.js";
 import { createCamera, snapCamera, updateCamera, screenToWorld, viewSize, shakeCamera } from "./camera.js";
-import { updateEnemies, hurtEnemy, kindHint, stunEnemy } from "./enemy.js";
+import { updateEnemies, hurtEnemy, kindHint, stunEnemy, slowEnemy, HIT_SLOW } from "./enemy.js";
 import {
   createRunState,
   applyPlayerStats,
@@ -43,9 +44,11 @@ import {
   NOTEBOOK_GOAL,
   SHEET_AMMO_GRANT,
   GOLD_PER_KILL,
-  LIFE_PRICE,
   REROLL_PRICE,
+  rerollPrice,
+  lifePrice,
 } from "./run.js";
+import { getGold, addGold, spendGold } from "./wallet.js";
 import {
   pickOffers,
   applyUpgrade,
@@ -57,12 +60,28 @@ import {
   offerDesc,
   listTaken,
   listBuildLines,
+  setAfterRebuild,
 } from "./upgrades.js";
+import {
+  applyMetaBonuses,
+  buy,
+  grantStartCard,
+  hasPerk,
+  noteNotebook,
+  noteRun,
+  noteSheet,
+  NOTEBOOK_PAGES,
+  pageModel,
+  playerLook,
+  resetMeta,
+  tallyGroups,
+} from "./meta.js";
 import {
   createFog,
   resizeFog,
   resetFog,
   updateFog,
+  peekSheet,
   canHearEnemy,
   canHearPoint,
   revealWorld,
@@ -89,9 +108,9 @@ import {
   setSfxOn,
   setMusicTrack,
 } from "./audio.js";
-import { createFx, resetFx, spawnBlot, spawnDamage, spawnGold, updateFx } from "./fx.js";
+import { createFx, resetFx, spawnBlot, spawnDamage, spawnGold, spawnText, updateFx, createInkPool, POOL_CAP, ACID_INTERVAL, STICKY_SHOT_MULT } from "./fx.js";
 import { pickSheetEvent } from "./events.js";
-import { sheetTimeLimit, overtimeInterval, formatClock } from "./deadline.js";
+import { sheetTimeLimit, overtimeInterval, formatClock, TARGET_TIME_BONUS } from "./deadline.js";
 
 const EXIT_NEED = 4;
 const PICK_COST = 3;
@@ -181,7 +200,7 @@ let overtimeWait = 0;
 let lastHurtCause = "laser";
 let muteHintLife = 0;
 let timeRng = Math.random;
-const hudPulse = { hp: 0, goal: 0, gun: 0, bank: 0, gold: 0, feature: 0 };
+const hudPulse = { hp: 0, goal: 0, gun: 0, bank: 0, gold: 0, feature: 0, clock: 0 };
 let hudSnap = null;
 
 function setStatus(text) {
@@ -196,6 +215,7 @@ function bestSheet() {
 function rememberBest() {
   const prev = bestSheet();
   if (levelNum > prev) sessionStorage.setItem(RECORD_KEY, String(levelNum));
+  noteSheet(levelNum);
 }
 
 function setMenuChrome(on, root = false) {
@@ -221,6 +241,7 @@ function hidePanels() {
   document.getElementById("sound-panel")?.classList.add("hidden");
   document.getElementById("pause-quit")?.classList.add("hidden");
   document.getElementById("options-panel")?.classList.add("hidden");
+  document.getElementById("notebook-panel")?.classList.add("hidden");
 }
 
 function syncSoundButtons() {
@@ -557,19 +578,20 @@ function showUpgradeSelect(offers, mode = "bank") {
   hidePanels();
   setMenuChrome(false);
   if (mode === "bounty") {
-    showOverlay("Добыча", `Сильный упал · выбери 1 из 2 · золото ${run.gold}`);
+    showOverlay("Добыча", `Сильный упал · выбери 1 из 2 · золото ${getGold()}`);
   } else {
     const keys = offers.length >= 3 ? "1 / 2 / 3" : "1 / 2";
     showOverlay(
       "Прокачка",
-      `Метки: ${run.targetBank} · выбор ${PICK_COST} · золото ${run.gold} · ${keys} или Дальше`,
+      `Метки: ${run.targetBank} · выбор ${PICK_COST} · золото ${getGold()} · ${keys} или Дальше`,
     );
   }
   if (upgradeSkip) upgradeSkip.classList.toggle("hidden", mode === "bounty");
   if (upgradeReroll) {
     upgradeReroll.classList.remove("hidden");
-    upgradeReroll.disabled = run.gold < REROLL_PRICE;
-    upgradeReroll.textContent = `Обновить — ${REROLL_PRICE} (R)`;
+    const free = (run.freeReroll || 0) > 0;
+    upgradeReroll.disabled = !free && getGold() < rerollPrice(run);
+    upgradeReroll.textContent = free ? "Обновить — бесплатно (R)" : `Обновить — ${rerollPrice(run)} (R)`;
   }
   fillShopTaken(true);
   if (upgradePanel) {
@@ -595,13 +617,15 @@ function showUpgradeSelect(offers, mode = "bank") {
 
 function rerollOffers() {
   if (!upgradeOffers || (shopMode !== "bank" && shopMode !== "bounty")) return;
-  if (run.gold < REROLL_PRICE) return;
+  const free = (run.freeReroll || 0) > 0;
+  if (!free && getGold() < rerollPrice(run)) return;
   const offers = pickOffers(run, upgradeOffers.length, Math.random, {
     lowLife: player?.hp === 1,
     exclude: upgradeOffers.map((u) => u.id),
   });
   if (offers.length === 0) return;
-  run.gold -= REROLL_PRICE;
+  if (free) run.freeReroll = 0;
+  else if (!spendGold(rerollPrice(run))) return;
   sfx.upgrade();
   showUpgradeSelect(offers, shopMode);
 }
@@ -686,7 +710,15 @@ function showMenu(screen = "root") {
   if (screen === "options") {
     showOverlay("Опции", "M глушит музыку и звуки сразу");
     document.getElementById("options-panel")?.classList.remove("hidden");
+    document.getElementById("opt-reset-ask")?.classList.add("hidden");
+    document.getElementById("opt-reset")?.classList.remove("hidden");
     syncSoundButtons();
+    return;
+  }
+  if (screen === "notebook") {
+    showOverlay("Тетрадь", `золото ${getGold()}`);
+    document.getElementById("notebook-panel")?.classList.remove("hidden");
+    paintNotebook();
     return;
   }
   if (screen === "seed") {
@@ -702,18 +734,18 @@ function showMenu(screen = "root") {
   if (menuPage) menuPage.classList.remove("hidden");
   if (screen === "controls") {
     showOverlay("Управление", "");
-    menuPageText.textContent =
-      `WASD или стрелки — ходить.\nЛКМ или пробел — выстрел, можно зажать.\nЛазер греется и после очереди стынет.\nПосле «Играть» можно вписать сид. Пустое поле — случайный. На одном сиде всегда одно стартовое оружие.\nМузыка и звуки — в «Опциях» и на паузе.\nM — выключить или включить сразу и музыку, и звуки.\nНа бегу лучи разлетаются шире, чем стоя.\nПрицел (пунктир траектории) берётся как апгрейд.\nEsc — пауза (в меню — назад).\nR — начать забег заново с того же сида; в прокачке R — обновить карточки за ${REROLL_PRICE} золота.`;
+    menuPageText.innerHTML =
+      `<b class="ink-key">WASD</b> или стрелки — ходить. <b class="ink-key">Мышь</b> — прицел.\n<b class="ink-key">ЛКМ</b> или <b class="ink-key">пробел</b> — выстрел, можно зажать.\n<b class="ink-key">Shift</b> — рывок, если взята карточка.\n<b class="ink-key">1, 2, 3</b> — выбрать карточку прокачки, добычи или ответ в происшествии. <b class="ink-key">Enter</b> или «Дальше» — пропустить выбор и закрыть «Что вышло».\n<b class="ink-key">Esc</b> — пауза. На паузе «Выйти из уровня» открывает поражение. В меню Esc — назад.\n<b class="ink-key">R</b> — забег заново с того же сида. В прокачке и добыче R обновляет карточки: база ${REROLL_PRICE} золота, скидка делает дешевле, один раз за забег может быть бесплатно.\n<b class="ink-key">M</b> — сразу и музыка, и звуки. По отдельности — в «Опциях» и на паузе.\nЛазер греется и после очереди стынет. На бегу лучи разлетаются шире, чем стоя.\nПунктир траектории — отдельная карточка, не правая кнопка.`;
   } else if (screen === "about") {
     showOverlay("Об игре", "");
-    menuPageText.textContent =
-      `Лист 1: собери ${EXIT_NEED} мишени из ${TARGET_COUNT} — откроются два шлюза снизу.\nСо 2-го листа цель другая и зависит от сида: все метки, просто проход, выжить, зачистка. С 3-го может выпасть босс — убить чемпиона.\nЗелёный «тихо» — обычный следующий лист и происшествие с выбором. Красный «жар» — следующий лист сложнее; каждый красный подряд поднимает жар (враги крепче и чаще).\nМишени только подбирать: подойти вплотную, выстрелом не сбить.\nЛишние метки копятся: после листа 3 метки = выбор 1 из 2 апгрейдов, при банке 6 — 3 карточки.\nС ${Math.ceil(TARGET_COUNT * 0.75)} мишеней начинается охота.\nСтраж и чемпион — не с первого листа. Цель тетради — ${NOTEBOOK_GOAL} листов, можно идти дальше.\nИногда лист со сроком (с 2-го); после ${NOTEBOOK_GOAL} срок всегда и короче. Если время вышло — раз в несколько секунд 1 урон.\nАвтомат и дробь получают +${SHEET_AMMO_GRANT} патронов на каждом новом листе.\nЗа каждого врага +${GOLD_PER_KILL} золота. Золото обновляет карточки прокачки (${REROLL_PRICE}) и покупает жизнь на окне поражения (${LIFE_PRICE}). Врагов на листе конечное число: 10 на первом и +5 на каждом следующем.\nСид забега: ${runSeed}`;
+    menuPageText.innerHTML =
+      `Лист 1: собери <b class="ink-key">${EXIT_NEED} мишени</b> из ${TARGET_COUNT} — откроются два шлюза снизу.\nСо 2-го листа цель из сида: все метки, <b class="ink-key">выжить</b> или зачистка. На <b class="ink-key">выжить</b> враги уже стоят на листе и сразу идут в атаку. На большом листе изредка просто проход. С 3-го может выпасть <b class="ink-key">босс</b> — убить чемпиона.\nЛист растёт с номером и к ${NOTEBOOK_GOAL}-му становится А1. Чем больше лист, тем больше комнат.\nЗелёный <b class="ink-key">«тихо»</b> — обычный следующий лист и происшествие с выбором. Красный <b class="ink-key">«жар»</b> — следующий сложнее. Жар копится навсегда: враги крепче, быстрее и целятся короче. Зелёный жар не снимает.\nМишени только подбирать. Выстрел по метке её не берёт. С ${Math.ceil(TARGET_COUNT * 0.75)} мишеней начинается <b class="ink-key">охота</b>.\n<b class="ink-key">Крик</b> врага будит соседей: над головой знак и звук. Карточка «Глухой крик» соседей не поднимает.\nЛишние метки копятся. После листа 3 метки — выбор 1 из 2 карточек, при банке 6 — три. Способность тетради открывает третью уже с банка 4.\nПопадание своего луча замедляет врага. Оглушение и лужи — отдельные карточки: лужа на попадании, на убийстве, на рикошете или под ногами, когда вас ранили.\nКаталог прокачки широкий: ствол, урон, защита, шаг, разведка, <b class="ink-key">золото</b> и помехи врагам. Карточки не меняют стартовый ствол. Рывок на Shift берётся карточкой.\nСтраж со 2-го листа, чемпион с 3-го (на жарком — со 2-го). С каждой страницы с 3-й у чемпиона на одну способность больше, без потолка; повтор её усиливает. Обычный выстрел врага гаснет о стену, рикошет — способность чемпиона.\nЦель тетради — <b class="ink-key">${NOTEBOOK_GOAL} листов</b>, штамп «тетрадь исписана», забег идёт дальше. После этого зелёный выход заблокирован, остаётся только жар.\nЛист 1 без срока. Со 2-го по ${NOTEBOOK_GOAL}-й срок иногда. Дальше срок всегда: 60 с и каждый лист на 4 с короче, но не короче 15 с. Мишень на листе со сроком даёт +${TARGET_TIME_BONUS} с. После нуля раз в несколько секунд 1 урон.\nАвтомат и дробь получают +${SHEET_AMMO_GRANT} патронов на каждом новом листе. Патроны с врагов выпадают реже; пустой магазин — патроны гарантированы.\nЗа врага +${GOLD_PER_KILL} золота сразу в кошелёк. Новый забег кошелёк не обнуляет. Золото обновляет карточки (база ${REROLL_PRICE}) и покупает жизнь на поражении (${lifePrice(0)}, каждая следующая в забеге дороже, до ${lifePrice(99)}). После «Выйти из уровня» жизнь не продаётся.\nВ меню <b class="ink-key">«Тетрадь»</b> за золото: цвет чернил, шлем, знак, цвет луча; три уровня каждого ствола; способности на забег. Страница «Счёт» помнит, сколько раз тетрадь исписана, лучший лист и число забегов. «Сбросить прогресс» в опциях стирает покупки и счёт, золото остаётся.\nВрагов на листе конечное число: 10 на первом и +5 на каждом следующем.\nПункт «Рекорд» — лучший лист только этой вкладки. Долгий счёт — в тетради.`;
   } else {
     showOverlay("Рекорд", "");
     const best = bestSheet();
     menuPageText.textContent = best > 0
-      ? `Лучший лист за эту сессию: ${best}.\nСбрасывается, если закрыть вкладку.\nСид: ${runSeed}`
-      : `Пока нет рекорда. Пройди хотя бы один лист.\nСид: ${runSeed}`;
+      ? `Лучший лист за эту вкладку: ${best}.\nЗакрыл вкладку — этот рекорд пропадёт.\nСколько раз тетрадь исписана, лучший лист и число забегов — на странице «Счёт» в «Тетради».\nСид: ${runSeed}`
+      : `Пока нет рекорда этой вкладки. Пройди хотя бы один лист.\nДолгий счёт — на странице «Счёт» в «Тетради».\nСид: ${runSeed}`;
   }
 }
 
@@ -809,14 +841,18 @@ function tryOpenExit() {
   if (objectiveReady()) openExitGate(sheet);
 }
 
-function noteKill(enemy) {
+function noteKill(enemy, shot = null) {
   sfx.kill();
-  run.gold += GOLD_PER_KILL;
+  let gain = GOLD_PER_KILL + (Number(run.mods.goldBonus) || 0);
+  if (enemy.kind === "champion" && run.mods.champBounty) gain += 100;
+  if (hasPerk("gold_boost")) gain = Math.round(gain * 1.2);
+  addGold(gain);
+  run.goldEarned += gain;
   spawnGold(
     particles,
     enemy.x - camera.x + camera.viewW / 2,
     enemy.y - camera.y + camera.viewH / 2,
-    GOLD_PER_KILL,
+    gain,
   );
   const needAmmo = usesAmmo(run) && run.ammo <= 0;
   maybeDropLoot(enemy.x, enemy.y, needAmmo);
@@ -830,14 +866,35 @@ function noteKill(enemy) {
   }
   tryOpenExit();
   if (run.mods.lifeSteal > 0 && Math.random() < run.mods.lifeSteal) healPlayer(player);
+  if (run.mods.poolOnKill) dropPool(enemy.x, enemy.y);
+  if (run.mods.killRush) player.rushTimer = 1.2;
+  if (run.mods.panic) {
+    for (const other of enemies) {
+      if (!other.alive || other === enemy) continue;
+      if (Math.hypot(other.x - enemy.x, other.y - enemy.y) < 110) stunEnemy(other, 0.3);
+    }
+  }
+  if (shot && !shot.child && run.mods.chainKill) chainFrom(enemy);
+}
+
+function chainFrom(enemy) {
+  const next = nearestEnemy(enemy.x, enemy.y, enemy);
+  if (!next || Math.hypot(next.x - enemy.x, next.y - enemy.y) > 220) return;
+  const ang = Math.atan2(next.y - enemy.y, next.x - enemy.x);
+  shots.push(createShot(
+    { x: enemy.x, y: enemy.y },
+    { x: Math.cos(ang), y: Math.sin(ang) },
+    "player",
+    { damage: Math.max(1, run.mods.damage || 1), maxBounces: 0, child: true },
+  ));
 }
 
 function makeSheet() {
   const rng = sheetRng(runSeed, levelNum);
   const tag = pickSheetTag(levelNum, rng);
-  const timeLimit = sheetTimeLimit(levelNum, rng);
-  const level = generateLevel(rng, { tag, seed: hashVisible(runSeed, levelNum) });
-  level.timeLimit = level.tag === "a1" && timeLimit > 0 ? timeLimit * A1_SCALE : timeLimit;
+  const timeLimit = sheetTimeLimit(levelNum, rng, sheetScale(levelNum));
+  const level = generateLevel(rng, { tag, levelNum, seed: hashVisible(runSeed, levelNum) });
+  level.timeLimit = timeLimit;
   const objective = pickSheetObjective(levelNum, runSeed);
   level.objective = objective.id;
   level.kills = 0;
@@ -845,7 +902,19 @@ function makeSheet() {
   level.bossDown = false;
   level.surviveLeft = objective.id === "survive" ? surviveSeconds(level.timeLimit) : 0;
   level.goalLife = 3.6;
+  if (levelNum > NOTEBOOK_GOAL) blockExit(level, "calm");
   return level;
+}
+
+function tickBlockedExits(dt) {
+  for (const ex of sheet?.exits || []) {
+    if (!ex.blocked) continue;
+    const spot = ex.approach ? cellCenter(ex.approach.c, ex.approach.r) : null;
+    const near = !!spot && Math.hypot(player.x - spot.x, player.y - spot.y) < CELL * 2.2;
+    if (near && !ex.playerNear) sfx.reject();
+    ex.playerNear = near;
+    ex.blockNote = near ? 1.2 : Math.max(0, (ex.blockNote || 0) - dt);
+  }
 }
 
 function hashVisible(seed, level) {
@@ -869,9 +938,14 @@ function loadSheet(keepPlayer = false) {
   player.angle = Math.PI / 2;
   resetLevelShield(run);
   applyPlayerStats(player, run);
+  if (levelNum === 1 && hasPerk("first_shield")) {
+    player.shieldCharges = Math.max(player.shieldCharges || 0, 1);
+    run.mods.shieldCharges = player.shieldCharges;
+  }
   if (keepPlayer && run.mods.levelHeal) healPlayer(player);
-  if (usesAmmo(run)) addAmmo(run, SHEET_AMMO_GRANT);
-  run.firstShotPending = !!run.mods.firstShot;
+  if (usesAmmo(run)) addAmmo(run, SHEET_AMMO_GRANT + (run.mods.sheetAmmoBonus || 0));
+  run.firstShotPending = !!(run.mods.firstShot || run.mods.firstShotDamage);
+  player.calm = 0;
   weapon = createWeapon();
   shots = [];
   pickups = [];
@@ -880,6 +954,7 @@ function loadSheet(keepPlayer = false) {
   lost = false;
   paused = false;
   resetFog(fog);
+  if (run.mods.mapPeek) peekSheet(fog, 3);
   resetFx(particles);
   muzzleFlash = 0;
   huntFlash = 0;
@@ -927,6 +1002,10 @@ function restartFromFirst() {
   levelNum = 1;
   run = createRunState();
   applyWeaponSwap(run, starterWeaponId(runSeed), true);
+  applyMetaBonuses(run);
+  run.freeReroll = hasPerk("free_reroll") ? 1 : 0;
+  grantStartCard(run, sheetRng(runSeed, 88001));
+  noteRun();
   notebookFlash = 0;
   const begin = () => {
     loadSheet(false);
@@ -949,6 +1028,7 @@ function goNextSheet() {
     if (from === NOTEBOOK_GOAL) {
       notebookFlash = 2.4;
       sfx.notebook();
+      noteNotebook();
     }
     loadSheet(true);
     playPaper("smooth", () => beginUpgradePick());
@@ -956,7 +1036,9 @@ function goNextSheet() {
 }
 
 function shopCount() {
-  return run.targetBank >= 6 ? 3 : 2;
+  if (run.targetBank >= 6) return 3;
+  if (hasPerk("early_third") && run.targetBank >= 4) return 3;
+  return 2;
 }
 
 function beginUpgradePick() {
@@ -1170,7 +1252,7 @@ function hudState() {
     goalHint: goal.hint,
     goalLife: goal.life,
     bank: run.targetBank,
-    gold: run.gold,
+    gold: getGold(),
     feature: featureLine(),
     hunt: isHuntMode(),
     exitOpen: !!sheet?.exitOpen && !isHuntMode() && !overtime,
@@ -1209,6 +1291,7 @@ function resetHudPulse() {
   hudPulse.bank = 0;
   hudPulse.gold = 0;
   hudPulse.feature = 0;
+  hudPulse.clock = 0;
 }
 
 function tickHudPulse(dt) {
@@ -1220,7 +1303,7 @@ function tickHudPulse(dt) {
     goal: goalPulseKey(),
     gun: `${run.weaponId}|${gun.hot}|${usesAmmo(run) ? run.ammo : gun.state === "готов" ? "ready" : "cd"}`,
     bank: run.targetBank,
-    gold: run.gold,
+    gold: getGold(),
     feature: featureLine(),
   };
   if (hudSnap) {
@@ -1253,7 +1336,7 @@ function pauseSheetText() {
   if (run.heat) {
     lines.push(
       run.heat > 1
-        ? `жар ${run.heat} — враги ещё крепче и чаще (серия красных выходов)`
+        ? `жар ${run.heat} — враги ещё крепче и чаще (жар не спадает)`
         : "жар — враги крепче и чаще, может выйти лишний чемпион",
     );
   }
@@ -1267,7 +1350,7 @@ function pauseSheetText() {
   if (levelNum > NOTEBOOK_GOAL) {
     lines.push("дальше тетради — срок на каждом листе и короче");
   }
-  lines.push("шлюзы снизу: тихо — происшествие, жар — сложнее (серия копится)");
+  lines.push("шлюзы снизу: тихо — происшествие, жар — сложнее (жар не спадает)");
   return lines;
 }
 
@@ -1379,9 +1462,20 @@ function collectPickups() {
   pickups = pickups.filter((p) => p.alive);
 }
 
-function onTargetHit() {
+function onTargetHit(target) {
   run.targetBank += 1;
+  if ((run.mods.bankBonus || 0) > 0 && Math.random() < run.mods.bankBonus) {
+    run.targetBank += 1;
+    if (target) spawnText(particles, target.x, target.y - 12, "+1", "#1e5aab");
+  }
   sfx.mark();
+  if (sheetTimed) {
+    sheetTimer = overtime ? TARGET_TIME_BONUS : sheetTimer + TARGET_TIME_BONUS;
+    overtime = false;
+    overtimeWait = 0;
+    hudPulse.clock = 0.6;
+    if (target) spawnText(particles, target.x, target.y, `+${TARGET_TIME_BONUS} с`, "#1e5aab");
+  }
   tryOpenExit();
   if (run.mods.reloadOnTarget && weapon) {
     weapon.cooldown *= 0.5;
@@ -1393,6 +1487,9 @@ function onTargetHit() {
       healPlayer(player);
     }
   }
+  if (run.mods.targetShield && player && (player.shieldCharges || 0) < 1) {
+    player.shieldCharges = 1;
+  }
 }
 
 function collectTargets() {
@@ -1402,7 +1499,7 @@ function collectTargets() {
     if (Math.hypot(player.x - target.x, player.y - target.y) < player.radius + TARGET_RADIUS + 2) {
       target.hit = true;
       gained = true;
-      onTargetHit();
+      onTargetHit(target);
     }
   }
   if (gained) tryOpenExit();
@@ -1424,7 +1521,7 @@ function tryAdvance() {
     run.pendingHeat = (Number(run.heat) || 0) + 1;
     run.pendingEvent = false;
   } else {
-    run.pendingHeat = 0;
+    run.pendingHeat = Number(run.heat) || 0;
     run.pendingEvent = true;
   }
   goNextSheet();
@@ -1446,7 +1543,7 @@ function showDefeat(cause, sound = true) {
     [`цель: ${goalHud().title}`, `оружие: ${getWeapon(run).label}`],
     listBuildLines(run),
     "без апгрейдов",
-    [`лист ${levelNum} · сид ${runSeed}`],
+    [`лист ${levelNum} · сид ${runSeed}`, `золото за забег +${run.goldEarned} · всего ${getGold()}`],
   );
   syncBuyLife();
   if (deathPanel) deathPanel.classList.remove("hidden");
@@ -1458,13 +1555,15 @@ function syncBuyLife() {
   const btn = document.getElementById("death-buy");
   if (!btn) return;
   btn.classList.toggle("hidden", lastHurtCause === "quit");
-  btn.disabled = run.gold < LIFE_PRICE;
-  btn.textContent = `Купить жизнь — ${LIFE_PRICE} (есть ${run.gold})`;
+  const price = lifePrice(run.livesBought);
+  btn.disabled = getGold() < price;
+  btn.textContent = `Купить жизнь — ${price} (есть ${getGold()})`;
 }
 
 function buyLife() {
-  if (mode !== "play" || !lost || lastHurtCause === "quit" || run.gold < LIFE_PRICE) return;
-  run.gold -= LIFE_PRICE;
+  if (mode !== "play" || !lost || lastHurtCause === "quit") return;
+  if (!spendGold(lifePrice(run.livesBought))) return;
+  run.livesBought += 1;
   lost = false;
   paused = false;
   player.hp = player.maxHp;
@@ -1482,6 +1581,13 @@ function buyLife() {
 
 function tryLose() {
   if (lost || player.hp > 0) return;
+  if (hasPerk("last_breath") && !run.lastBreathUsed) {
+    run.lastBreathUsed = true;
+    player.hp = 1;
+    grantInvuln(player, 2);
+    setStatus("С колена — ещё один шанс");
+    return;
+  }
   const cause = lastHurtCause === "time" ? "Время вышло" : "Попал под лазер";
   showDefeat(cause);
 }
@@ -1500,6 +1606,31 @@ function tickObjective(dt) {
   if (sheet.surviveLeft <= 0) tryOpenExit();
 }
 
+function tickSecondWind(dt) {
+  if (!run.mods.secondWind || sheet?.secondWindUsed || !player) return;
+  if (player.hp >= player.maxHp) {
+    player.calm = 0;
+    return;
+  }
+  player.calm = (player.calm || 0) + dt;
+  if (player.calm >= 3 && healPlayer(player)) sheet.secondWindUsed = true;
+}
+
+function nearestOpenTarget() {
+  if (!sheet || !player) return null;
+  let best = null;
+  let bestD = Infinity;
+  for (const target of sheet.targets || []) {
+    if (target.hit) continue;
+    const dist = Math.hypot(target.x - player.x, target.y - player.y);
+    if (dist < bestD) {
+      best = target;
+      bestD = dist;
+    }
+  }
+  return best;
+}
+
 function tickDeadline(dt) {
   if (!sheetTimed || lost) return;
   if (!overtime) {
@@ -1507,7 +1638,7 @@ function tickDeadline(dt) {
     if (sheetTimer <= 0) {
       sheetTimer = 0;
       overtime = true;
-      overtimeWait = overtimeInterval(timeRng);
+      overtimeWait = overtimeInterval(timeRng) * (run.mods.overtimeSlow || 1);
       sfx.hunt();
     }
     return;
@@ -1521,7 +1652,8 @@ function tickDeadline(dt) {
     shakeCamera(camera, 3);
   }
   if (hit === "hurt") sfx.hurt();
-  overtimeWait = overtimeInterval(timeRng);
+  notePlayerHurt(hit);
+  overtimeWait = overtimeInterval(timeRng) * (run.mods.overtimeSlow || 1);
   tryLose();
 }
 
@@ -1649,17 +1781,34 @@ function resolveHits(shot) {
           shot.alive = false;
           return;
         }
-        stunEnemy(enemy, 0.5 + (run.mods.stunBonus || 0));
-        if ((enemy.plates ?? 0) > 0) {
+        slowEnemy(enemy, HIT_SLOW + (run.mods.slowBonus || 0));
+        if (run.mods.stunOnHit > 0) stunEnemy(enemy, run.mods.stunOnHit);
+        if ((run.mods.poolOnHit || 0) > 0 && Math.random() < Math.min(0.7, run.mods.poolOnHit)) {
+          dropPool(enemy.x, enemy.y);
+        }
+        if ((enemy.plates ?? 0) > 0 && !run.mods.plateBreak) {
           hurtEnemy(enemy);
           spawnDamage(particles, enemy.x, enemy.y, 1, true);
           spawnBlot(particles, enemy.x, enemy.y, "#1a3d6e", 6);
-          if (!enemy.alive) noteKill(enemy);
+          if (!enemy.alive) noteKill(enemy, shot);
           shot.alive = false;
           return;
         }
+        let heldPlates = 0;
+        if ((enemy.plates ?? 0) > 0 && run.mods.plateBreak) {
+          hurtEnemy(enemy);
+          spawnDamage(particles, enemy.x, enemy.y, 1, true);
+          heldPlates = enemy.plates || 0;
+          enemy.plates = 0;
+        }
         shot._pierced.add(enemy);
         let dmg = shot.damage || 1;
+        if (run.mods.finisher && enemy.hp < (enemy.maxHp || enemy.hp)) dmg += 1;
+        if (run.mods.ambush) {
+          const fx = Math.cos(enemy.angle);
+          const fy = Math.sin(enemy.angle);
+          if (shot.dx * fx + shot.dy * fy > 0.45) dmg += 1;
+        }
         if (run.mods.bounceDamage && shot.bounces > 0) dmg += 1;
         if (run.mods.critChance > 0 && Math.random() < run.mods.critChance) dmg += 1;
         spawnDamage(particles, enemy.x, enemy.y, dmg);
@@ -1668,14 +1817,12 @@ function resolveHits(shot) {
           if (!enemy.alive) break;
           hurtEnemy(enemy);
         }
-        if (!enemy.alive) noteKill(enemy);
+        if (enemy.alive && heldPlates > 0) enemy.plates = heldPlates;
+        if (!enemy.alive) noteKill(enemy, shot);
         if (shot.pierce > 0) {
           shot.pierce -= 1;
         } else {
           shot.alive = false;
-          if (shot.inkDrop) {
-            inkPools.push({ x: shot.x, y: shot.y, radius: CELL * 0.9, life: 2 });
-          }
           return;
         }
       }
@@ -1686,13 +1833,103 @@ function resolveHits(shot) {
   if (shotHitsCircle(shot, player.x, player.y, player.radius)) {
     shot.alive = false;
     const hit = hurtPlayer(player, run);
-    if (hit === "block" || hit === "dead") return;
+    if (hit === "block" || hit === "dead" || hit === "dodge") return;
     lastHurtCause = "laser";
     spawnBlot(particles, player.x, player.y, "#9a2b2b", 8);
     shakeCamera(camera, 3);
     if (hit === "hurt") sfx.hurt();
+    notePlayerHurt(hit);
     tryLose();
   }
+}
+
+function absorbChampionInk() {
+  if (!sheet) return;
+  for (const enemy of enemies) {
+    if (!enemy.pendingInk) continue;
+    placeInkStain(enemy.pendingInk, enemy.inkLife || 3.5);
+    enemy.pendingInk = null;
+  }
+}
+
+function placeInkStain(cells, life) {
+  const blob = [];
+  for (const cell of cells) {
+    const row = sheet.grid?.[cell.r];
+    if (!row || row[cell.c] !== "floor") continue;
+    row[cell.c] = "blot";
+    blob.push({ c: cell.c, r: cell.r });
+  }
+  if (!blob.length) return;
+  if (!sheet.blots) sheet.blots = [];
+  if (!sheet.inkStains) sheet.inkStains = [];
+  sheet.blots.push(blob);
+  sheet.inkStains.push({ blob, life });
+}
+
+function tickInkStains(dt) {
+  if (!sheet?.inkStains?.length) return;
+  const left = [];
+  for (const stain of sheet.inkStains) {
+    stain.life -= dt;
+    if (stain.life > 0) {
+      left.push(stain);
+      continue;
+    }
+    for (const cell of stain.blob) {
+      if (sheet.grid?.[cell.r]?.[cell.c] === "blot") sheet.grid[cell.r][cell.c] = "floor";
+    }
+    const index = sheet.blots?.indexOf(stain.blob) ?? -1;
+    if (index >= 0) sheet.blots.splice(index, 1);
+  }
+  sheet.inkStains = left;
+}
+
+function dropPool(x, y) {
+  inkPools.push(createInkPool(run.mods, x, y));
+  if (inkPools.length > POOL_CAP) inkPools.splice(0, inkPools.length - POOL_CAP);
+}
+
+function notePlayerHurt(hit) {
+  if (hit === "hurt") player.calm = 0;
+  if (hit === "hurt" && run.mods.poolOnHurt) dropPool(player.x, player.y);
+}
+
+function slowEnemyShots() {
+  for (const shot of shots) {
+    if (!shot.alive || shot.team !== "enemy") continue;
+    if (shot.baseSpeed == null) shot.baseSpeed = shot.speed;
+    let sticky = false;
+    for (const pool of inkPools) {
+      if (!pool.sticky || pool.life <= 0) continue;
+      if (Math.hypot(shot.x - pool.x, shot.y - pool.y) < pool.radius) {
+        sticky = true;
+        break;
+      }
+    }
+    shot.speed = sticky ? shot.baseSpeed * STICKY_SHOT_MULT : shot.baseSpeed;
+  }
+}
+
+function tickPools(dt) {
+  for (const pool of inkPools) {
+    pool.life -= dt;
+    if (!pool.acid || pool.life <= 0) continue;
+    pool.acidWait -= dt;
+    if (pool.acidWait > 0) continue;
+    pool.acidWait += ACID_INTERVAL;
+    for (const enemy of enemies) {
+      if (!enemy.alive || enemy.emergeTimer > 0) continue;
+      if (Math.hypot(enemy.x - pool.x, enemy.y - pool.y) >= pool.radius) continue;
+      const plates = enemy.plates ?? 0;
+      const wounded = hurtEnemy(enemy);
+      if (wounded || (enemy.plates ?? 0) < plates) {
+        spawnDamage(particles, enemy.x, enemy.y, 1, !wounded);
+      }
+      if (!enemy.alive) noteKill(enemy);
+    }
+  }
+  inkPools = inkPools.filter((pool) => pool.life > 0);
 }
 
 function afterShotMove(shot, dt) {
@@ -1706,11 +1943,14 @@ function afterShotMove(shot, dt) {
       shots.push(splitShot(shot));
     }
   }
+  if (shot.bounced && shot.team === "player" && (run.mods.poolOnBounce || 0) > 0) {
+    if (Math.random() < run.mods.poolOnBounce) {
+      const at = shot.bouncePos || shot;
+      dropPool(at.x, at.y);
+    }
+  }
   if (shot.fogCut && shot.team === "player") {
     revealWorld(fog, shot.x, shot.y, 1.5, 1);
-  }
-  if (shot.inkDrop && !shot.alive) {
-    inkPools.push({ x: shot.x, y: shot.y, radius: CELL * 0.9, life: 2 });
   }
 }
 
@@ -1738,6 +1978,7 @@ function frame(now) {
       drawFrame(ctx, view, sheet, player, shots, enemies, sheet.exitOpen, null, pickups, {
         camera,
         fog,
+        look: playerLook(),
         hud: hudState(),
         crosshair: input.mouse.inside ? { x: input.mouse.x, y: input.mouse.y } : null,
       });
@@ -1761,6 +2002,7 @@ function frame(now) {
     drawFrame(ctx, view, sheet, player, shots, enemies, sheet?.exitOpen, null, pickups, {
       camera,
       hidePlayer: true,
+      look: playerLook(),
       targetPulse: true,
       hud: hudState(),
     });
@@ -1795,11 +2037,16 @@ function frame(now) {
   }
 
   tickHudPulse(dt);
+  if (!locked && run.mods.dash && input.consumeDash() && (player.dashCd || 0) <= 0) {
+    startDash(player, input);
+  }
   syncMoveSpeed(player, run);
   const axis = input.axis();
-  updatePlayer(player, input, sheet.walls, dt, locked, sheet.grid, sheet);
+  updatePlayer(player, input, sheet.walls, dt, locked, sheet.grid, sheet, {
+    wallSlide: run.mods.wallSlide || 1,
+  });
   if (!locked && (axis.x !== 0 || axis.y !== 0)) sfx.step(stepClock);
-  if (!locked) updateWeapon(weapon, dt);
+  if (!locked) updateWeapon(weapon, dt, run.mods);
 
   if (!locked) {
     collectTargets();
@@ -1809,6 +2056,8 @@ function frame(now) {
     updateGates(sheet, dt);
     tickObjective(dt);
     tickDeadline(dt);
+    tickSecondWind(dt);
+    tickBlockedExits(dt);
     tickSpawner(spawner, dt, world());
     for (const e of enemies) {
       if (e.alive && e.emergeTimer <= 0) announceKind(e);
@@ -1839,15 +2088,22 @@ function frame(now) {
         dodgeFail: run.mods.dodgeFail,
         enemyFireMult: run.mods.enemyFireMult * Math.max(0.5, 1 - 0.1 * (run.heat || 0)),
         wardenShieldMult: run.mods.wardenShieldMult,
+        champShieldMult: run.mods.champShieldMult ?? 1,
+        aimJam: run.mods.aimJam || 0,
+        quietStep: !!run.mods.quietStep,
+        shoutMute: !!run.mods.shoutMute,
+        onShout: () => sfx.shout(),
         huntCalm: run.mods.huntCalm,
         inkPools,
       },
     );
     for (const enemy of enemies) {
       if (!enemy.alive || !enemy.wantsBackup) continue;
-      enemy.wantsBackup = false;
-      queueSpawn(spawner, world(), "grunt");
+      const count = Math.max(1, Math.floor(Number(enemy.wantsBackup)) || 1);
+      enemy.wantsBackup = 0;
+      for (let i = 0; i < count; i++) queueSpawn(spawner, world(), "grunt");
     }
+    absorbChampionInk();
     for (const fire of enemyShots) {
       sfx.enemyShoot();
       shots.push(
@@ -1855,11 +2111,15 @@ function frame(now) {
           { x: fire.x, y: fire.y },
           { x: fire.dx, y: fire.dy },
           "enemy",
-          { speedMult: run.mods.enemyShotMult },
+          {
+            speedMult: (fire.speedMult ?? 1) * (run.mods.enemyShotMult ?? 1),
+            maxBounces: fire.maxBounces ?? 0,
+          },
         ),
       );
     }
 
+    slowEnemyShots();
     for (const shot of shots) {
       if (!shot.alive) continue;
       updateShot(shot, sheet.walls, bounds, dt);
@@ -1870,8 +2130,8 @@ function frame(now) {
       resolveHits(shot);
     }
     for (const pickup of pickups) pickup.bob += dt * 4;
-    for (const pool of inkPools) pool.life -= dt;
-    inkPools = inkPools.filter((p) => p.life > 0);
+    tickPools(dt);
+    tickInkStains(dt);
     updateFx(particles, dt);
     enemies = enemies.filter((e) => e.alive);
     shots = shots.filter((s) => s.alive);
@@ -1880,8 +2140,16 @@ function frame(now) {
     updateFog(fog, sheet.cells, player, dt, {
       visionBonus: run.mods.playerVisionBonus || 0,
       hearBonus: run.mods.playerHearBonus || 0,
+      shotHearBonus: run.mods.shotHearBonus || 0,
       visionNerf: sheet.tag === "draft" ? -2 : 0,
     });
+    if (run.mods.enemyMark) {
+      for (const e of enemies) {
+        if (!e.alive) continue;
+        if (fog.worldVisible(e.x, e.y)) e.markTimer = 2;
+        else e.markTimer = Math.max(0, (e.markTimer || 0) - dt);
+      }
+    }
   } else {
     updateFx(particles, dt);
   }
@@ -1904,6 +2172,7 @@ function frame(now) {
     {
       fog,
       camera,
+      look: playerLook(),
       hear: {
         enemy: (e) => canHearEnemy(fog, e),
         shot: (s) => canHearPoint(fog, s.x, s.y),
@@ -1914,6 +2183,7 @@ function frame(now) {
       inkPools,
       particles,
       hud: hudState(),
+      compass: run.mods.compass ? nearestOpenTarget() : null,
       crosshair:
         mode === "play" && !lost && !paused && !upgradeOffers && input.mouse.inside
           ? { x: input.mouse.x, y: input.mouse.y }
@@ -1958,6 +2228,31 @@ bindSoundToggle("toggle-sfx", "sfx");
 bindSoundToggle("opt-music", "music");
 bindSoundToggle("opt-sfx", "sfx");
 document.getElementById("menu-play")?.addEventListener("click", () => showMenu("seed"));
+document.getElementById("menu-notebook")?.addEventListener("click", () => {
+  notebookPage = 0;
+  showMenu("notebook");
+});
+document.getElementById("notebook-back")?.addEventListener("click", () => showMenu("root"));
+document.getElementById("notebook-tabs")?.addEventListener("click", (event) => {
+  const tab = event.target.closest("[data-page]");
+  if (!tab || menuScreen !== "notebook") return;
+  notebookPage = Number(tab.dataset.page) || 0;
+  paintNotebook();
+});
+document.getElementById("opt-reset")?.addEventListener("click", () => {
+  document.getElementById("opt-reset")?.classList.add("hidden");
+  document.getElementById("opt-reset-ask")?.classList.remove("hidden");
+});
+document.getElementById("opt-reset-no")?.addEventListener("click", () => {
+  document.getElementById("opt-reset-ask")?.classList.add("hidden");
+  document.getElementById("opt-reset")?.classList.remove("hidden");
+});
+document.getElementById("opt-reset-yes")?.addEventListener("click", () => {
+  resetMeta();
+  document.getElementById("opt-reset-ask")?.classList.add("hidden");
+  document.getElementById("opt-reset")?.classList.remove("hidden");
+  if (overlaySub && menuScreen === "options") overlaySub.textContent = "Тетрадь чистая. Золото на месте";
+});
 document.getElementById("menu-options")?.addEventListener("click", () => showMenu("options"));
 document.getElementById("options-back")?.addEventListener("click", () => showMenu("root"));
 document.getElementById("seed-go")?.addEventListener("click", () => beginFromMenu());
@@ -1974,6 +2269,50 @@ document.getElementById("death-menu")?.addEventListener("click", () => goToMenu(
 document.getElementById("pause-quit")?.addEventListener("click", () => quitLevel());
 
 bindAudioUnlock();
+setAfterRebuild(applyMetaBonuses);
+
+function paintNotebook() {
+  const pageId = NOTEBOOK_PAGES[notebookPage] || NOTEBOOK_PAGES[0];
+  const model = pageModel(pageId);
+  const leaf = document.getElementById("notebook-leaf");
+  document.querySelectorAll("#notebook-tabs .nb-tab").forEach((tab) => {
+    tab.classList.toggle("is-on", Number(tab.dataset.page) === notebookPage);
+  });
+  if (!leaf) return;
+  if (model.tally) {
+    const groups = tallyGroups(model.notebooks);
+    const marks = groups.length
+      ? `<div class="nb-tally-row">${groups
+          .map((n) => `<span class="tally${n === 5 ? " is-five" : ""}">${"<i></i>".repeat(n === 5 ? 4 : n)}</span>`)
+          .join("")}</div>`
+      : `<p class="nb-stat">пока ни разу</p>`;
+    leaf.innerHTML = `<p class="nb-label">Тетрадь исписана</p>${marks}<p class="nb-stat">лучший лист ${model.bestSheet || "—"}</p><p class="nb-stat">забегов ${model.runs}</p>`;
+    return;
+  }
+  leaf.innerHTML = model.groups
+    .map((group) => {
+      const buttons = group.items
+        .map((item) => {
+          const swatch = item.swatch ? `<span class="nb-swatch" style="background:${item.swatch}"></span>` : "";
+          const desc = item.desc ? `<span class="nb-desc">${item.desc}</span>` : "";
+          return `<button type="button" class="nb-btn${item.on ? " is-on" : ""}" data-buy="${item.id}"${item.disabled ? " disabled" : ""}>${swatch}${item.label}${desc}</button>`;
+        })
+        .join("");
+      return `<div class="nb-group"><p class="nb-label">${group.title}</p><div class="nb-row">${buttons}</div></div>`;
+    })
+    .join("");
+  leaf.querySelectorAll("[data-buy]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const res = buy(btn.getAttribute("data-buy"));
+      if (!res.ok) return;
+      if (overlaySub) overlaySub.textContent = `золото ${getGold()}`;
+      paintNotebook();
+    });
+  });
+}
+
+let notebookPage = 0;
+
 try {
   showMenu("root");
   requestAnimationFrame(frame);

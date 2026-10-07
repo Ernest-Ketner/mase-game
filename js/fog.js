@@ -154,6 +154,13 @@ export function revealWorld(fog, x, y, seconds = 1.5, radius = 1) {
   }
 }
 
+export function peekSheet(fog, seconds = 3) {
+  const until = fog.now + seconds;
+  for (let i = 0; i < fog.until.length; i++) {
+    if (fog.until[i] < until) fog.until[i] = until;
+  }
+}
+
 export function updateFog(fog, grid, player, dt, opts = {}) {
   fog.now += dt;
   const visionCells = Math.max(4, VISION_CELLS + (opts.visionBonus || 0) + (opts.visionNerf || 0));
@@ -161,6 +168,7 @@ export function updateFog(fog, grid, player, dt, opts = {}) {
   fog.visionCells = visionCells;
   fog.hearBonus = hearBonus;
   fog.hearCells = HEAR_CELLS + hearBonus;
+  fog.shotHearBonus = opts.shotHearBonus || 0;
   refreshLos(fog, grid, player);
   refreshHear(fog, player);
 }
@@ -176,5 +184,6 @@ export function canHearEnemy(fog, enemy) {
 }
 
 export function canHearPoint(fog, x, y) {
-  return hearDist(fog, x, y) <= (fog.hearCells ?? HEAR_CELLS);
+  const reach = (fog.hearCells ?? HEAR_CELLS) + (fog.shotHearBonus || 0);
+  return hearDist(fog, x, y) <= reach;
 }

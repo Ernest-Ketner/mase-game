@@ -1,4 +1,4 @@
-import { CELL, COLS, MARGIN, ROWS, cellCenter, worldSize } from "./maze.js";
+import { CELL, COLS, MARGIN, ROWS, cellCenter, worldSize, gateSpan } from "./maze.js";
 import { cellExplored } from "./fog.js";
 import { applyCamera, viewRect } from "./camera.js";
 import { kindMark } from "./enemy.js";
@@ -28,6 +28,14 @@ const LASER = "#d31f1f";
 const LASER_GLOW = "rgba(255, 70, 60, 0.45)";
 const ENEMY_LASER = "#d4651f";
 const ENEMY_LASER_GLOW = "rgba(255, 140, 50, 0.4)";
+
+let look = {
+  ink: PEN,
+  helmet: "helm",
+  mark: "none",
+  beam: LASER,
+  beamGlow: LASER_GLOW,
+};
 
 export function setupCanvas(canvas, width, height) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -427,6 +435,11 @@ function drawExitStamp(ctx, exitDef, open, heatLevel = 0) {
   const x1 = MARGIN + (span.maxC + 1) * CELL;
   const mid = (x0 + x1) / 2;
   const y = MARGIN + ROWS * CELL + 4;
+  if (exitDef.blocked) {
+    drawBlockedExit(ctx, exitDef, x0, x1, y);
+    drawBlockedStamp(ctx, mid, y + 14, 0);
+    return;
+  }
   ctx.save();
   ctx.strokeStyle = open ? ink : faded;
   ctx.fillStyle = open ? (heat ? "rgba(154, 43, 43, 0.12)" : "rgba(46, 140, 72, 0.12)") : "rgba(90, 96, 108, 0.06)";
@@ -456,6 +469,65 @@ function drawExitStamp(ctx, exitDef, open, heatLevel = 0) {
     ctx.lineTo(x1 - 8, y + 22);
     ctx.stroke();
   }
+  ctx.restore();
+}
+
+/** Зелёный проём после конца тетради зачёркнут косой штриховкой. */
+function drawBlockedExit(ctx, exitDef, x0, x1, stampY) {
+  const minR = Math.min(...exitDef.gate.cells.map((c) => c.r));
+  const top = MARGIN + minR * CELL - 2;
+  const bottom = stampY + 30;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, top, x1 - x0, bottom - top);
+  ctx.clip();
+  ctx.strokeStyle = "rgba(26, 61, 110, 0.78)";
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  const h = bottom - top;
+  for (let d = -h; d < x1 - x0 + h; d += 5) {
+    const wob = (hash01(d, minR, 7) - 0.5) * 1.6;
+    ctx.moveTo(x0 + d, bottom + wob);
+    ctx.lineTo(x0 + d + h, top - wob);
+  }
+  for (let d = -h; d < x1 - x0 + h; d += 9) {
+    const wob = (hash01(minR, d, 11) - 0.5) * 1.6;
+    ctx.moveTo(x0 + d, top + wob);
+    ctx.lineTo(x0 + d + h, bottom - wob);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBlockedNotes(ctx, level) {
+  for (const ex of level?.exits || []) {
+    const note = ex.blocked ? ex.blockNote || 0 : 0;
+    if (note <= 0 || !ex.gate?.cells?.length) continue;
+    const span = gateSpan(ex.gate);
+    drawBlockedStamp(ctx, (span.x0 + span.x1) / 2, MARGIN + ROWS * CELL + 18, note);
+  }
+}
+
+/** Штамп «заблокировано» на поле листа; `note` > 0 — игрок только что упёрся, штамп вздрагивает. */
+function drawBlockedStamp(ctx, x, y, note) {
+  const k = Math.min(1, note * 2);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(-0.07 + Math.sin(note * 40) * 0.05 * k);
+  ctx.scale(1 + 0.12 * k, 1 + 0.12 * k);
+  ctx.strokeStyle = k > 0 ? "#b02a2a" : "rgba(154, 43, 43, 0.75)";
+  ctx.fillStyle = "rgba(255, 246, 236, 0.94)";
+  ctx.lineWidth = k > 0 ? 2.4 : 1.8;
+  ctx.beginPath();
+  ctx.rect(-42, -10, 84, 20);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = ctx.strokeStyle;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "700 14px Caveat, 'Segoe Print', 'Comic Sans MS', cursive";
+  ctx.fillText("заблокировано", 0, 1);
   ctx.restore();
 }
 
@@ -691,6 +763,7 @@ function drawSoldier(ctx, figure, pen, pose = "idle", kind = "grunt") {
     ctx.strokeStyle = pen;
     ctx.lineWidth = 2.15;
   }
+  if (isPlayer) drawPlayerHat(ctx, hx, hr, pen);
 
   const gunY = tired ? 2.95 : 2.4;
   const muzzle = gunner ? 12.1 : tired ? 9.4 : 11.85;
@@ -743,6 +816,72 @@ function drawSoldier(ctx, figure, pen, pose = "idle", kind = "grunt") {
   ctx.restore();
 }
 
+function drawPlayerHat(ctx, hx, hr, pen) {
+  const hat = look.helmet || "helm";
+  ctx.save();
+  ctx.strokeStyle = pen;
+  ctx.fillStyle = pen;
+  ctx.lineWidth = 1.7;
+  if (hat === "beret") {
+    ctx.beginPath();
+    ctx.ellipse(hx - 0.6, -hr * 0.15, 5.1, 3.15, -0.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  } else if (hat === "cap") {
+    ctx.beginPath();
+    ctx.ellipse(hx, 0, 3.5, 2.7, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(hx + hr + 0.8, 0, 2.9, 1.05, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (hat === "hood") {
+    ctx.beginPath();
+    ctx.arc(hx - 0.4, 0, hr + 2.6, -2.15, 2.15);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(hx - hr - 1.2, -2.4);
+    ctx.lineTo(hx - hr * 0.2, -1.1);
+    ctx.moveTo(hx - hr - 1.2, 2.4);
+    ctx.lineTo(hx - hr * 0.2, 1.1);
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.arc(hx - 0.15, 0, hr + 1.05, Math.PI * 0.62, Math.PI * 1.38);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawHeadMark(ctx, x, y) {
+  const kind = look.mark;
+  if (!kind || kind === "none") return;
+  ctx.save();
+  ctx.translate(x, y - 18);
+  ctx.strokeStyle = look.ink || PEN;
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  if (kind === "cross") {
+    ctx.moveTo(0, -5.2);
+    ctx.lineTo(0, 4.6);
+    ctx.moveTo(-3.6, -1.4);
+    ctx.lineTo(3.6, -1.4);
+  } else if (kind === "ring") {
+    ctx.arc(0, 0, 4.1, 0, Math.PI * 2);
+  } else {
+    ctx.moveTo(0, -5.2);
+    ctx.lineTo(0, 5.2);
+    ctx.moveTo(-5.2, 0);
+    ctx.lineTo(5.2, 0);
+    ctx.moveTo(-3.4, -3.4);
+    ctx.lineTo(3.4, 3.4);
+    ctx.moveTo(-3.4, 3.4);
+    ctx.lineTo(3.4, -3.4);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawForceField(ctx, x, y) {
   const pulse = 0.7 + 0.45 * Math.sin(performance.now() / 170);
   ctx.save();
@@ -781,11 +920,13 @@ function drawPlayer(ctx, player) {
     ctx.restore();
     if (blink) ctx.save();
     if (blink) ctx.globalAlpha = 0.45;
-    drawSoldier(ctx, player, blink ? "#9a2b2b" : PEN, "idle", "player");
+    drawSoldier(ctx, player, blink ? "#9a2b2b" : look.ink || PEN, "idle", "player");
     if (blink) ctx.restore();
+    drawHeadMark(ctx, player.x, player.y);
     return;
   }
-  drawSoldier(ctx, player, PEN, "idle", "player");
+  drawSoldier(ctx, player, look.ink || PEN, "idle", "player");
+  drawHeadMark(ctx, player.x, player.y);
 }
 
 function drawEnemySilhouette(ctx, enemy) {
@@ -842,6 +983,38 @@ function drawFogOverlay(ctx, fog, vis = null) {
   ctx.restore();
 }
 
+function drawEnemyMark(ctx, enemy) {
+  ctx.save();
+  ctx.strokeStyle = "#9a2b2b";
+  ctx.globalAlpha = 0.8;
+  ctx.lineWidth = 1.4;
+  ctx.setLineDash([2, 2]);
+  ctx.beginPath();
+  ctx.arc(enemy.x, enemy.y, 16, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawCompass(ctx, player, target) {
+  if (!player || !target || target.hit) return;
+  const ang = Math.atan2(target.y - player.y, target.x - player.x);
+  const x = player.x + Math.cos(ang) * 22;
+  const y = player.y + Math.sin(ang) * 22;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(ang);
+  ctx.strokeStyle = "#1e5aab";
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-6, 0);
+  ctx.lineTo(7, 0);
+  ctx.lineTo(3, -3.5);
+  ctx.moveTo(7, 0);
+  ctx.lineTo(3, 3.5);
+  ctx.stroke();
+  ctx.restore();
+}
 function drawMuzzleFlash(ctx, player, amount) {
   if (!player || amount <= 0) return;
   const t = Math.min(1, amount / 0.08);
@@ -860,6 +1033,7 @@ function drawEnemy(ctx, enemy, mode = "full") {
   if (!enemy.alive) return;
   if (mode === "heard") {
     drawEnemySilhouette(ctx, enemy);
+    drawShoutMark(ctx, enemy);
     return;
   }
   const pen = enemyPen(enemy.kind);
@@ -906,6 +1080,33 @@ function drawEnemy(ctx, enemy, mode = "full") {
     ctx.restore();
   }
 
+  if (enemy.slowTimer > 0) {
+    ctx.save();
+    ctx.strokeStyle = "#1a3d6e";
+    ctx.globalAlpha = 0.75;
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = "round";
+    const wob = Math.sin(performance.now() / 90) * 1.4;
+    ctx.beginPath();
+    ctx.moveTo(enemy.x - 8, enemy.y + 13);
+    ctx.quadraticCurveTo(enemy.x - 4, enemy.y + 10 + wob, enemy.x, enemy.y + 13);
+    ctx.quadraticCurveTo(enemy.x + 4, enemy.y + 16 - wob, enemy.x + 8, enemy.y + 13);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  if ((enemy.markTimer || 0) > 0) drawEnemyMark(ctx, enemy);
+  if ((enemy.rageTimer || 0) > 0) {
+    ctx.save();
+    ctx.strokeStyle = "#9a2b2b";
+    ctx.globalAlpha = 0.7;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(enemy.x, enemy.y, 18, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   if (enemy.tiredTimer > 0) {
     ctx.save();
     ctx.fillStyle = pen;
@@ -928,6 +1129,32 @@ function drawEnemy(ctx, enemy, mode = "full") {
     ctx.fillRect(x, y, width, 4);
     x += width + gap;
   }
+  ctx.restore();
+  drawShoutMark(ctx, enemy);
+}
+
+function drawShoutMark(ctx, enemy) {
+  const left = enemy.shoutTimer || 0;
+  if (left <= 0) return;
+  const k = Math.min(1, left / 0.7);
+  ctx.save();
+  ctx.translate(enemy.x, enemy.y - 36);
+  ctx.globalAlpha = 0.35 + 0.65 * k;
+  ctx.strokeStyle = "#7a2d1a";
+  ctx.fillStyle = "#7a2d1a";
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-8, 3);
+  ctx.lineTo(-3, -5);
+  ctx.moveTo(0, 4);
+  ctx.lineTo(0, -7);
+  ctx.moveTo(8, 3);
+  ctx.lineTo(3, -5);
+  ctx.stroke();
+  ctx.font = "700 14px Caveat, 'Segoe Print', cursive";
+  ctx.textAlign = "center";
+  ctx.fillText("!", 0, -8);
   ctx.restore();
 }
 
@@ -1028,8 +1255,11 @@ function drawInkPools(ctx, pools, vis) {
     if (vis && (pool.x < vis.left || pool.x > vis.right || pool.y < vis.top || pool.y > vis.bottom)) {
       continue;
     }
-    const t = Math.min(1, pool.life / 2);
+    const t = Math.min(1, pool.life / (pool.maxLife || 2));
     ctx.globalAlpha = 0.35 + 0.4 * t;
+    ctx.fillStyle = pool.acid ? "rgba(90, 36, 72, 0.2)" : "rgba(27, 51, 88, 0.16)";
+    ctx.strokeStyle = pool.acid ? "rgba(90, 36, 72, 0.72)" : "rgba(27, 51, 88, 0.45)";
+    ctx.setLineDash(pool.sticky ? [3, 2] : []);
     ctx.beginPath();
     ctx.ellipse(pool.x, pool.y, pool.radius, pool.radius * 0.62, 0.2, 0, Math.PI * 2);
     ctx.fill();
@@ -1135,7 +1365,13 @@ function drawHud(ctx, view, hud) {
     let clockY = top - 2;
     if (hud.clock) {
       ctx.font = "700 26px Caveat, 'Segoe Print', 'Comic Sans MS', cursive";
-      inkText(ctx, hud.clock, view.width / 2, clockY, hud.overtime ? "#9a2b2b" : "#1e5aab");
+      inkText(
+        ctx,
+        hud.clock,
+        view.width / 2,
+        clockY,
+        blinkColor(pulse.clock, false, hud.overtime ? "#9a2b2b" : "#1e5aab"),
+      );
       clockY += 26;
     }
     if (hud.surviveClock) {
@@ -1238,14 +1474,14 @@ function drawShot(ctx, shot, mode = "full") {
   ctx.globalAlpha = heard ? 0.28 : 1;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = enemy ? ENEMY_LASER_GLOW : LASER_GLOW;
+  ctx.strokeStyle = enemy ? ENEMY_LASER_GLOW : look.beamGlow || LASER_GLOW;
   ctx.lineWidth = (heard ? 4 : 7) * thick;
   drawInkPath(ctx, heard && pts.length > 3 ? pts.slice(-4) : pts);
-  ctx.strokeStyle = enemy ? ENEMY_LASER : LASER;
+  ctx.strokeStyle = enemy ? ENEMY_LASER : look.beam || LASER;
   ctx.lineWidth = (heard ? 1.5 : 2.4) * thick;
   drawInkPath(ctx, heard && pts.length > 3 ? pts.slice(-4) : pts);
   if (!heard) {
-    ctx.fillStyle = enemy ? ENEMY_LASER : LASER;
+    ctx.fillStyle = enemy ? ENEMY_LASER : look.beam || LASER;
     ctx.beginPath();
     ctx.arc(shot.x, shot.y, Math.max(2.4, (shot.radius ?? 5) * 0.64), 0, Math.PI * 2);
     ctx.fill();
@@ -1268,6 +1504,7 @@ export function drawFrame(
   const world = worldSize();
   ctx.fillStyle = PAPER;
   ctx.fillRect(0, 0, view.width, view.height);
+  if (fx.look) look = fx.look;
   if (!level || !player) {
     drawPaper(ctx, world.width, world.height);
     return;
@@ -1302,6 +1539,7 @@ export function drawFrame(
   for (const enemy of enemies) {
     if (!enemy.alive) continue;
     if (seen(enemy.x, enemy.y)) drawEnemy(ctx, enemy, "full");
+    else if ((enemy.markTimer || 0) > 0) drawEnemyMark(ctx, enemy);
     else if (fx.hear && fx.hear.enemy(enemy)) drawEnemy(ctx, enemy, "heard");
   }
   drawPreview(ctx, preview);
@@ -1316,7 +1554,9 @@ export function drawFrame(
   if (!fx.hidePlayer) {
     drawPlayer(ctx, player);
     drawMuzzleFlash(ctx, player, fx.muzzleFlash || 0);
+    drawCompass(ctx, player, fx.compass);
   }
+  drawBlockedNotes(ctx, level);
   ctx.restore();
   drawAlarmWash(ctx, view, fx.hud?.alarm);
   const goldAt = drawHud(ctx, view, fx.hud);

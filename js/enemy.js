@@ -24,11 +24,24 @@ const MISS_CHANCE = 0.38;
 
 const VISION_RANGE = CELL * 9;
 const VISION_HUNT_MULT = 1.15;
-const TRAVEL_CHANCE = 0.22;
+/** Доля сторожей: не выходят из своей комнаты, пока не заметят игрока. Остальные — патрульные. */
+export const GUARD_SHARE = 0.7;
+/** Попадание своего луча: полскорости на это время, выстрел откладывается. */
+export const HIT_SLOW = 0.5;
+const HIT_SLOW_FACTOR = 0.5;
+const HIT_SHOT_DELAY = 0.3;
+/** Патрульный после обхода комнаты чаще идёт к следующей по маршруту, чем кружит на месте. */
+const PATROL_MOVE_ON = 0.7;
+/** Соседние комнаты маршрута — не дальше этого числа клеток по сетке. */
+const ROUTE_REACH = 40;
 const ABORT_CHASE_CHANCE = 0.08;
 const ABORT_CHECK_EVERY = 1.4;
 const LOSE_SIGHT_TIME = 2.2;
 const AIM_HOLD = 1;
+const AIM_STEP = 0.04;
+const AIM_HEAT_STEP = 0.05;
+const AIM_CHAMPION_CUT = 0.15;
+const AIM_FLOOR = 0.3;
 
 const SHIELD_DURATION = 3;
 const TIRED_DURATION = 10;
@@ -102,23 +115,47 @@ export function kindStats(kind) {
   }
 }
 
+export const CHAMPION_ABILITIES = [
+  "burst",
+  "shield",
+  "call",
+  "dash",
+  "zigzag",
+  "blot",
+  "leap",
+  "mend",
+  "rage",
+  "far",
+  "bounce",
+];
+const ABILITY_GAP_FLOOR = 1.2;
+
+/** С 3-го листа по одной способности за страницу. На жарком 2-м — одна. */
+export function championAbilityCount(levelNum) {
+  const n = Math.max(1, Math.floor(Number(levelNum)) || 1);
+  if (n < 3) return n >= 2 ? 1 : 0;
+  return n - 2;
+}
+
+export function championAbilityGap(count) {
+  const n = Math.max(1, Math.floor(Number(count)) || 1);
+  return Math.max(ABILITY_GAP_FLOOR, 3.05 - 0.18 * (n - 1));
+}
+
 export function championLoadout(levelNum, heat = 0) {
   const n = Math.max(1, Math.floor(Number(levelNum)) || 1);
   const h = Math.max(0, Math.floor(Number(heat)) || 0);
   const hp = Math.min(8 + h, 2 + n + h);
   const plates = n + h >= 6 ? 2 : 1;
-  const pool = ["burst", "shield", "call", "dash", "zigzag"];
-  let abilities;
-  if (n === 1) abilities = ["burst", "zigzag"];
-  else if (n === 2) abilities = ["burst", "shield"];
-  else if (n === 3) abilities = ["call", "zigzag", "burst"];
-  else {
-    const count = n >= 5 ? 3 : 2;
-    const start = (n - 1) % pool.length;
-    abilities = [];
-    for (let i = 0; i < count; i++) abilities.push(pool[(start + i) % pool.length]);
+  const gained = championAbilityCount(n);
+  const ranks = {};
+  const abilities = [];
+  for (let i = 0; i < gained; i++) {
+    const id = CHAMPION_ABILITIES[i % CHAMPION_ABILITIES.length];
+    if (!ranks[id]) abilities.push(id);
+    ranks[id] = (ranks[id] || 0) + 1;
   }
-  return { hp, plates, abilities };
+  return { hp, plates, abilities, ranks };
 }
 
 export function pickSpawnKind(levelNum, rng = Math.random) {
@@ -231,13 +268,23 @@ function shotLineClear(grid, x1, y1, x2, y2) {
   return true;
 }
 
-function holdsAim(enemy, player, grid, dt, visionRange) {
+/** Сколько враг держит игрока на прицеле до выстрела: с листом и жаром всё быстрее. */
+export function enemyAimHold(levelNum, heat = 0, kind = "grunt") {
+  const n = Math.max(1, Math.floor(Number(levelNum)) || 1);
+  const h = Math.max(0, Math.floor(Number(heat)) || 0);
+  let hold = AIM_HOLD - AIM_STEP * Math.max(0, n - 3) - AIM_HEAT_STEP * h;
+  if (kind === "champion") hold -= AIM_CHAMPION_CUT;
+  return Math.max(AIM_FLOOR, hold);
+}
+
+function holdsAim(enemy, player, grid, dt, visionRange, aimJam = 0) {
+  const hold = (enemy.aimHold ?? AIM_HOLD) + aimJam;
   const sees =
     canSeePlayer(enemy, player, grid, visionRange) &&
     shotLineClear(grid, enemy.x, enemy.y, player.x, player.y);
-  if (sees) enemy.aimTime = Math.min(AIM_HOLD, (enemy.aimTime || 0) + dt);
+  if (sees) enemy.aimTime = Math.min(hold, (enemy.aimTime || 0) + dt);
   else enemy.aimTime = 0;
-  enemy.aimReady = sees && enemy.aimTime >= AIM_HOLD;
+  enemy.aimReady = sees && enemy.aimTime >= hold;
   return enemy.aimReady;
 }
 
@@ -273,21 +320,42 @@ function randomZoneCell(zone, avoid = null) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+function zoneAnchor(zone) {
+  return zone.portal || zone.cells?.[0] || null;
+}
+
+/** Маршрут патрульного: своя комната и одна–две ближайшие соседние. */
+function buildRoute(enemy, zones) {
+  const home = zoneAnchor(zones[enemy.homeZone]);
+  const route = [enemy.homeZone];
+  if (!home) return route;
+  const near = [];
+  for (let i = 0; i < zones.length; i++) {
+    if (i === enemy.homeZone || !zones[i].cells?.length) continue;
+    const at = zoneAnchor(zones[i]);
+    const d = Math.abs(at.c - home.c) + Math.abs(at.r - home.r);
+    if (d <= ROUTE_REACH) near.push({ i, d });
+  }
+  near.sort((a, b) => a.d - b.d);
+  const extra = 1 + Math.floor(Math.random() * 2);
+  for (const n of near.slice(0, extra)) route.push(n.i);
+  return route;
+}
+
 function pickPatrolTarget(enemy, zones) {
   const home = zones[enemy.homeZone];
   if (!home) return null;
   const here = { c: enemy.lastCell?.c, r: enemy.lastCell?.r };
 
-  if (zones.length > 1 && Math.random() < TRAVEL_CHANCE) {
-    const others = [];
-    for (let i = 0; i < zones.length; i++) {
-      if (i !== enemy.homeZone && zones[i].cells && zones[i].cells.length > 0) {
-        others.push(i);
-      }
+  if (enemy.role === "patrol" && zones.length > 1) {
+    if (!enemy.route || enemy.route.some((i) => !zones[i])) {
+      enemy.route = buildRoute(enemy, zones);
+      enemy.routeStep = 0;
     }
-    if (others.length > 0) {
-      const destZone = others[Math.floor(Math.random() * others.length)];
-      const cell = randomZoneCell(zones[destZone], here);
+    if (enemy.route.length > 1 && Math.random() < PATROL_MOVE_ON) {
+      enemy.routeStep = (enemy.routeStep + 1) % enemy.route.length;
+      const destZone = enemy.route[enemy.routeStep];
+      const cell = destZone !== enemy.homeZone ? randomZoneCell(zones[destZone], here) : null;
       if (cell) {
         enemy.mode = "travel";
         enemy.travelZone = destZone;
@@ -625,6 +693,18 @@ function returnToPatrol(enemy, grid, zones) {
   ensureGoal(enemy, grid, zones);
 }
 
+export function wakeToPlayer(enemy, player) {
+  if (!enemy) return;
+  enemy.emergeTimer = 0;
+  enemy.scale = 1;
+  if (!player) {
+    enemy.alert = true;
+    enemy.mode = "chase";
+    return;
+  }
+  startChase(enemy, player);
+}
+
 function startChase(enemy, player) {
   enemy.alert = true;
   enemy.mode = "chase";
@@ -636,14 +716,14 @@ function startChase(enemy, player) {
   enemy.tacticTimer = 0;
 }
 
-function shoutToNeighbors(enemies, grid, source, player) {
+function shoutToNeighbors(enemies, grid, source, player, reach = 7) {
   const from = worldToCell(source.x, source.y);
-  const dist = bfsDistances(grid, from, 7);
+  const dist = bfsDistances(grid, from, reach);
   for (const other of enemies) {
     if (!other.alive || other === source || other.emergeTimer > 0) continue;
     const here = worldToCell(other.x, other.y);
     const d = dist.get(`${here.c},${here.r}`);
-    if (d == null || d > 7) continue;
+    if (d == null || d > reach) continue;
     if (!other.alert || other.mode !== "chase") startChase(other, player);
     const split = Math.random();
     if (split < 0.4) {
@@ -787,6 +867,11 @@ function updateMovement(enemy, grid, walls, player, shots, zones, dt, opts = {})
         ? TRAVEL_SPEED
         : PATROL_SPEED) * speedMult;
   if (enemy.dashTimer > 0) speed *= 1.65;
+  if ((enemy.rageTimer || 0) > 0) {
+    const rage = enemy.abilityRanks?.rage || 1;
+    speed *= 1.28 + 0.12 * (rage - 1);
+  }
+  if (enemy.slowTimer > 0) speed *= HIT_SLOW_FACTOR;
   const pools = opts.inkPools || [];
   for (const pool of pools) {
     if (pool.life > 0 && Math.hypot(enemy.x - pool.x, enemy.y - pool.y) < pool.radius) {
@@ -825,40 +910,158 @@ function fireVolley(enemy, player, fired, count, grid) {
   enemy.noiseTimer = 0.45;
 }
 
-function useChampionAbility(enemy, player, fired, dt, grid) {
+function pushAimed(fired, enemy, player, grid, extras = {}) {
+  const shot = fireAt(enemy, player, grid);
+  if (!shot) return false;
+  if (extras.tight) {
+    const angle = aimJitter(enemy.angle, 0.02);
+    shot.dx = Math.cos(angle);
+    shot.dy = Math.sin(angle);
+  }
+  if (extras.speedMult) shot.speedMult = extras.speedMult;
+  if (extras.maxBounces != null) shot.maxBounces = extras.maxBounces;
+  fired.push(shot);
+  enemy.noiseTimer = 0.45;
+  return true;
+}
+
+function rankOf(enemy, id) {
+  return enemy.abilityRanks?.[id] || 1;
+}
+
+function retryAbility(enemy) {
+  const list = enemy.abilities || [];
+  if (!list.length) return;
+  enemy.abilityIndex = (enemy.abilityIndex - 1 + list.length) % list.length;
+  enemy.abilityTimer = 0.25;
+}
+
+function scheduleAbility(enemy) {
+  const base = championAbilityGap((enemy.abilities || []).length);
+  const jitter = base <= ABILITY_GAP_FLOOR ? 0 : Math.random() * 0.3;
+  enemy.abilityTimer = base + jitter;
+}
+
+function inkCells(enemy, rank) {
+  const here = worldToCell(enemy.x, enemy.y);
+  const around = [
+    { c: here.c + 1, r: here.r },
+    { c: here.c - 1, r: here.r },
+    { c: here.c, r: here.r + 1 },
+    { c: here.c, r: here.r - 1 },
+    { c: here.c + 1, r: here.r + 1 },
+    { c: here.c - 1, r: here.r - 1 },
+    { c: here.c + 2, r: here.r },
+    { c: here.c, r: here.r + 2 },
+  ];
+  const want = rank >= 3 ? 7 : rank >= 2 ? 4 : 2;
+  return around.slice(0, want);
+}
+
+function leapPortal(enemy, player, zones, rank) {
+  const portals = [];
+  for (const zone of zones || []) {
+    if (zone?.portal) portals.push(zone.portal);
+  }
+  const here = worldToCell(enemy.x, enemy.y);
+  const others = portals.filter((portal) => Math.hypot(portal.c - here.c, portal.r - here.r) > 2);
+  if (!others.length) return false;
+  let dest = others[Math.floor(Math.random() * others.length)];
+  if (rank >= 2 && player) {
+    let best = Infinity;
+    for (const portal of others) {
+      const dist = Math.hypot(portal.x - player.x, portal.y - player.y);
+      if (dist < best) {
+        best = dist;
+        dest = portal;
+      }
+    }
+  }
+  enemy.x = dest.x;
+  enemy.y = dest.y;
+  enemy.lastCell = { c: dest.c, r: dest.r };
+  clearStep(enemy);
+  enemy.emergeTimer = 0.28;
+  enemy.emergeMax = Math.max(enemy.emergeMax || 0.28, 0.28);
+  return true;
+}
+
+function mendPack(enemy, pack, rank) {
+  const near = [];
+  for (const other of pack || []) {
+    if (!other.alive || other === enemy || other.emergeTimer > 0) continue;
+    if (other.hp >= (other.maxHp || other.hp)) continue;
+    const dist = Math.hypot(other.x - enemy.x, other.y - enemy.y);
+    if (dist > 110) continue;
+    near.push({ other, dist });
+  }
+  near.sort((a, b) => a.dist - b.dist);
+  const healed = near.slice(0, rank);
+  for (const row of healed) {
+    row.other.hp = Math.min(row.other.maxHp || row.other.hp + 1, row.other.hp + 1);
+  }
+  return healed.length > 0;
+}
+
+function useChampionAbility(enemy, player, fired, dt, grid, opts = {}) {
   const list = enemy.abilities || [];
   if (list.length === 0) return;
-  enemy.abilityTimer = (enemy.abilityTimer ?? 1.2) - dt;
+  enemy.abilityTimer = (enemy.abilityTimer ?? championAbilityGap(list.length)) - dt;
   if (enemy.abilityTimer > 0) return;
   const ab = list[enemy.abilityIndex % list.length];
   enemy.abilityIndex = (enemy.abilityIndex + 1) % list.length;
-  enemy.abilityTimer = 2.2 + Math.random() * 1.1;
+  const rank = rankOf(enemy, ab);
+  scheduleAbility(enemy);
   if (ab === "burst") {
     if (!enemy.aimReady || !shotLineClear(grid, enemy.x, enemy.y, player.x, player.y)) {
-      enemy.abilityIndex = (enemy.abilityIndex - 1 + list.length) % list.length;
-      enemy.abilityTimer = 0.2;
+      retryAbility(enemy);
       return;
     }
-    fireVolley(enemy, player, fired, 3, grid);
+    fireVolley(enemy, player, fired, 3 + (rank - 1), grid);
     enemy.shootCooldown = Math.max(enemy.shootCooldown, 0.9);
   } else if (ab === "shield") {
-    enemy.shieldTimer = Math.max(enemy.shieldTimer || 0, 1.7);
+    const seconds = (1.7 + 0.5 * (rank - 1)) * (opts.champShieldMult ?? 1);
+    enemy.shieldTimer = Math.max(enemy.shieldTimer || 0, seconds);
     enemy.guarding = true;
     clearStep(enemy);
     enemy.moving = false;
   } else if (ab === "call") {
     enemy.wantsShout = true;
-    enemy.wantsBackup = true;
+    enemy.wantsBackup = rank;
     enemy.thinkTimer = Math.max(enemy.thinkTimer, 0.35);
   } else if (ab === "dash") {
-    enemy.dashTimer = 0.7;
+    enemy.dashTimer = 0.7 + 0.2 * (rank - 1);
     enemy.tactic = "zigzag";
     enemy.tacticTimer = 0.8;
     enemy.zigSign = Math.random() < 0.5 ? 1 : -1;
   } else if (ab === "zigzag") {
     enemy.tactic = "zigzag";
-    enemy.tacticTimer = 1.8;
+    enemy.tacticTimer = 1.8 + 0.45 * (rank - 1);
     enemy.thinkTimer = 0.45;
+  } else if (ab === "blot") {
+    enemy.pendingInk = inkCells(enemy, rank);
+    enemy.inkLife = 3.5 + (rank - 1);
+  } else if (ab === "leap") {
+    if (!leapPortal(enemy, player, opts.zones, rank)) retryAbility(enemy);
+  } else if (ab === "mend") {
+    if (!mendPack(enemy, opts.pack, rank)) enemy.abilityTimer = 0.4;
+  } else if (ab === "rage") {
+    if (enemy.hp > enemy.maxHp * 0.3) enemy.abilityTimer = 0.4;
+    else enemy.rageTimer = 2.2 + 0.7 * (rank - 1);
+  } else if (ab === "far") {
+    if (!shotLineClear(grid, enemy.x, enemy.y, player.x, player.y)) {
+      retryAbility(enemy);
+      return;
+    }
+    if (!pushAimed(fired, enemy, player, grid, { tight: true, speedMult: 1.35 + 0.15 * (rank - 1), maxBounces: 0 })) {
+      retryAbility(enemy);
+    }
+  } else if (ab === "bounce") {
+    if (!shotLineClear(grid, enemy.x, enemy.y, player.x, player.y)) {
+      retryAbility(enemy);
+      return;
+    }
+    if (!pushAimed(fired, enemy, player, grid, { maxBounces: rank })) retryAbility(enemy);
   }
 }
 
@@ -878,7 +1081,8 @@ function tryShootIfAlert(enemy, player, grid, dt, fired, opts = {}) {
   if (!shot) return;
   enemy.noiseTimer = 0.45;
   const huntCd = huntMode && !opts.huntCalm ? 0.85 : 1;
-  const cdMult = huntCd * (opts.enemyFireMult ?? 1) * kind.fireMult;
+  let cdMult = huntCd * (opts.enemyFireMult ?? 1) * kind.fireMult;
+  if (enemy.rageTimer > 0) cdMult *= 0.7;
   enemy.shootCooldown =
     (ENEMY_FIRE_MIN + Math.random() * (ENEMY_FIRE_MAX - ENEMY_FIRE_MIN)) * cdMult;
   fired.push(shot);
@@ -901,6 +1105,9 @@ export function spawnEnemy(spawn, maxHp, kind = "grunt", homeZone = 0, extras = 
     lastCell: { c: spawn.c, r: spawn.r },
     homeZone: Math.max(0, homeZone),
     travelZone: -1,
+    role: extras.role || (Math.random() < GUARD_SHARE ? "guard" : "patrol"),
+    route: null,
+    routeStep: 0,
     mode: "patrol",
     alert: false,
     loseSight: 0,
@@ -908,6 +1115,7 @@ export function spawnEnemy(spawn, maxHp, kind = "grunt", homeZone = 0, extras = 
     shootCooldown: ENEMY_FIRE_MIN + Math.random() * (ENEMY_FIRE_MAX - ENEMY_FIRE_MIN),
     aimTime: 0,
     aimReady: false,
+    aimHold: enemyAimHold(extras.levelNum || 1, extras.heat || 0, kind),
     hp: maxHp,
     maxHp,
     plates: stats.plates,
@@ -919,7 +1127,9 @@ export function spawnEnemy(spawn, maxHp, kind = "grunt", homeZone = 0, extras = 
     emergeMax: EMERGE_DURATION,
     scale: 1,
     noiseTimer: 0,
+    shoutTimer: 0,
     stunTimer: 0,
+    slowTimer: 0,
     wantsShout: false,
     wantsBackup: false,
     thinkTimer: Math.random() * 0.2,
@@ -929,8 +1139,12 @@ export function spawnEnemy(spawn, maxHp, kind = "grunt", homeZone = 0, extras = 
     flankSign: Math.random() < 0.5 ? 1 : -1,
     dashTimer: 0,
     abilities: [],
+    abilityRanks: {},
     abilityIndex: 0,
     abilityTimer: 1.1 + Math.random() * 0.6,
+    rageTimer: 0,
+    pendingInk: null,
+    inkLife: 0,
     guarding: false,
   };
   if (kind === "champion") {
@@ -939,6 +1153,8 @@ export function spawnEnemy(spawn, maxHp, kind = "grunt", homeZone = 0, extras = 
     enemy.maxHp = load.hp;
     enemy.plates = load.plates;
     enemy.abilities = load.abilities.slice();
+    enemy.abilityRanks = { ...load.ranks };
+    enemy.abilityTimer = championAbilityGap(load.abilities.length || 1);
   }
   return enemy;
 }
@@ -946,6 +1162,13 @@ export function spawnEnemy(spawn, maxHp, kind = "grunt", homeZone = 0, extras = 
 export function stunEnemy(enemy, seconds) {
   if (!enemy?.alive || seconds <= 0) return;
   enemy.stunTimer = Math.max(enemy.stunTimer || 0, seconds);
+}
+
+/** Замедление не останавливает врага. Повтор обновляет срок, отсрочка выстрела добавляется каждый раз. */
+export function slowEnemy(enemy, seconds) {
+  if (!enemy?.alive || seconds <= 0) return;
+  enemy.slowTimer = Math.max(enemy.slowTimer || 0, seconds);
+  enemy.shootCooldown = (enemy.shootCooldown || 0) + HIT_SHOT_DELAY;
 }
 
 export function hurtEnemy(enemy) {
@@ -972,7 +1195,7 @@ export function hurtEnemy(enemy) {
 }
 
 function updateWarden(enemy, grid, walls, player, shots, zones, dt, fired, opts) {
-  holdsAim(enemy, player, grid, dt, visionOf(enemy, opts));
+  holdsAim(enemy, player, grid, dt, visionOf(enemy, opts), opts.aimJam || 0);
   if (enemy.tiredTimer > 0) {
     enemy.tiredTimer = Math.max(0, enemy.tiredTimer - dt);
     enemy.moving = false;
@@ -1019,7 +1242,7 @@ function updateWarden(enemy, grid, walls, player, shots, zones, dt, fired, opts)
 }
 
 function updateChampion(enemy, grid, walls, player, shots, zones, dt, fired, opts) {
-  holdsAim(enemy, player, grid, dt, visionOf(enemy, opts));
+  holdsAim(enemy, player, grid, dt, visionOf(enemy, opts), opts.aimJam || 0);
   if (enemy.guarding && enemy.shieldTimer > 0) {
     enemy.shieldTimer = Math.max(0, enemy.shieldTimer - dt);
     if (enemy.shieldTimer === 0) enemy.guarding = false;
@@ -1028,7 +1251,7 @@ function updateChampion(enemy, grid, walls, player, shots, zones, dt, fired, opt
     enemy.angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
     return;
   }
-  if (enemy.alert) useChampionAbility(enemy, player, fired, dt, grid);
+  if (enemy.alert) useChampionAbility(enemy, player, fired, dt, grid, { ...opts, zones });
   if (enemy.guarding) {
     enemy.moving = false;
     return;
@@ -1038,7 +1261,7 @@ function updateChampion(enemy, grid, walls, player, shots, zones, dt, fired, opt
 }
 
 function updateGrunt(enemy, grid, walls, player, shots, zones, dt, fired, opts) {
-  holdsAim(enemy, player, grid, dt, visionOf(enemy, opts));
+  holdsAim(enemy, player, grid, dt, visionOf(enemy, opts), opts.aimJam || 0);
   updateMovement(enemy, grid, walls, player, shots, zones, dt, opts);
   tryShootIfAlert(enemy, player, grid, dt, fired, opts);
 }
@@ -1068,6 +1291,8 @@ export function updateEnemies(
     dodgeFail: opts.dodgeFail ?? 0,
     enemyFireMult: opts.enemyFireMult ?? 1,
     wardenShieldMult: opts.wardenShieldMult ?? 1,
+    champShieldMult: opts.champShieldMult ?? 1,
+    aimJam: opts.aimJam || 0,
     huntCalm: opts.huntCalm === true,
     pack: enemies,
     inkPools: opts.inkPools || [],
@@ -1076,6 +1301,7 @@ export function updateEnemies(
   for (const enemy of enemies) {
     if (!enemy.alive) continue;
     if (enemy.noiseTimer > 0) enemy.noiseTimer = Math.max(0, enemy.noiseTimer - dt);
+    if (enemy.shoutTimer > 0) enemy.shoutTimer = Math.max(0, enemy.shoutTimer - dt);
     if (enemy.emergeTimer > 0) {
       enemy.emergeTimer = Math.max(0, enemy.emergeTimer - dt);
       enemy.moving = false;
@@ -1087,6 +1313,8 @@ export function updateEnemies(
       enemy.moving = false;
       continue;
     }
+    if (enemy.slowTimer > 0) enemy.slowTimer = Math.max(0, enemy.slowTimer - dt);
+    if (enemy.rageTimer > 0) enemy.rageTimer = Math.max(0, enemy.rageTimer - dt);
 
     if (areaList.length > 0 && (enemy.homeZone < 0 || enemy.homeZone >= areaList.length)) {
       const here = worldToCell(enemy.x, enemy.y);
@@ -1110,7 +1338,10 @@ export function updateEnemies(
   for (const enemy of enemies) {
     if (!enemy.alive || !enemy.wantsShout) continue;
     enemy.wantsShout = false;
-    shoutToNeighbors(enemies, grid, enemy, player);
+    enemy.shoutTimer = 0.7;
+    opts.onShout?.(enemy);
+    if (opts.shoutMute) continue;
+    shoutToNeighbors(enemies, grid, enemy, player, opts.quietStep ? 4 : 7);
   }
 
   return fired;

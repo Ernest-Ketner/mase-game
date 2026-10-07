@@ -8,8 +8,18 @@ import { MAX_BOUNCES, PLAYER_COOLDOWN, PLAYER_LASER_SPEED } from "./laser.js";
 export const NOTEBOOK_GOAL = 20;
 export const SHEET_AMMO_GRANT = 6;
 export const GOLD_PER_KILL = 10;
-export const LIFE_PRICE = 900;
+export const LIFE_PRICES = [900, 1900, 2800, 3400, 4300, 5000];
 export const REROLL_PRICE = 100;
+
+export function rerollPrice(run) {
+  const cut = Math.min(0.6, Math.max(0, Number(run?.mods?.rerollDiscount) || 0));
+  return Math.round(REROLL_PRICE * (1 - cut));
+}
+
+export function lifePrice(bought) {
+  const i = Math.max(0, Math.floor(Number(bought)) || 0);
+  return LIFE_PRICES[Math.min(i, LIFE_PRICES.length - 1)];
+}
 
 export function createRunState() {
   return {
@@ -21,7 +31,8 @@ export function createRunState() {
     firstShotPending: false,
     targetHealCount: 0,
     targetBank: 0,
-    gold: 0,
+    goldEarned: 0,
+    livesBought: 0,
     heat: 0,
     pendingHeat: 0,
     pendingEvent: false,
@@ -71,7 +82,58 @@ export function createRunState() {
       inkPool: false,
       fogCut: false,
       lastClip: false,
-      stunBonus: 0,
+      slowBonus: 0,
+      stunOnHit: 0,
+      poolOnHit: 0,
+      poolOnKill: false,
+      poolOnBounce: 0,
+      poolOnHurt: false,
+      poolOnTarget: false,
+      poolRadiusMult: 1,
+      poolLifeBonus: 0,
+      poolAcid: false,
+      poolSticky: false,
+      poolDeep: false,
+      heatMult: 1,
+      coolMult: 1,
+      ammoSave: 0,
+      spreadMult: 1,
+      moveSpreadMult: 1,
+      pelletBonus: 0,
+      pierceCdMult: 1,
+      sheetAmmoBonus: 0,
+      finisher: false,
+      ambush: false,
+      chainKill: false,
+      plateBreak: false,
+      bigGame: false,
+      farShot: false,
+      closeShot: false,
+      targetShield: false,
+      dodgeChance: 0,
+      overtimeSlow: 1,
+      secondWind: false,
+      killRush: false,
+      dash: false,
+      crouch: false,
+      mapPeek: false,
+      compass: false,
+      enemyMark: false,
+      shotHearBonus: 0,
+      goldBonus: 0,
+      rerollDiscount: 0,
+      bankBonus: 0,
+      champBounty: false,
+      aimJam: 0,
+      portalSlow: 1,
+      panic: false,
+      champShieldMult: 1,
+      shoutMute: false,
+      smgLong: false,
+      firstShotDamage: false,
+      wallPierce: 0,
+      quietStep: false,
+      wallSlide: 1,
     },
   };
 }
@@ -97,6 +159,8 @@ export function applyPlayerStats(player, run) {
 export function syncMoveSpeed(player, run) {
   let speed = PLAYER_BASE_SPEED * run.mods.moveMult;
   if (run.mods.lastStand && player.hp <= 1) speed *= 1.2;
+  if (player.rushTimer > 0) speed *= 1.25;
+  if (player.dashTimer > 0) speed *= 3.2;
   player.speed = speed;
 }
 

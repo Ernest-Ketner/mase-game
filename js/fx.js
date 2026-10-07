@@ -1,3 +1,24 @@
+export const POOL_LIFE = 2;
+export const ACID_INTERVAL = 1.5;
+export const POOL_CAP = 28;
+export const STICKY_SHOT_MULT = 0.5;
+
+/** Лужа от прокачки: размер и срок берутся из модов забега на момент появления. */
+export function createInkPool(mods, x, y) {
+  const life = POOL_LIFE + (Number(mods?.poolLifeBonus) || 0);
+  const radius = 18 * (Number(mods?.poolRadiusMult) || 1);
+  return {
+    x,
+    y,
+    radius,
+    life,
+    maxLife: life,
+    acid: !!mods?.poolAcid,
+    sticky: !!mods?.poolSticky,
+    acidWait: ACID_INTERVAL,
+  };
+}
+
 export function createFx() {
   return {
     blots: [],
@@ -79,6 +100,10 @@ export function spawnDamage(fx, x, y, amount, plate = false) {
   }
 }
 
+export function spawnText(fx, x, y, text, color) {
+  fx.numbers.push({ x, y: y - 14, text, life: 0.9, max: 0.9, plate: false, color });
+}
+
 export function updateFx(fx, dt) {
   for (const b of fx.blots) {
     b.life -= dt;
@@ -115,7 +140,7 @@ export function drawFx(ctx, fx) {
   for (const n of fx.numbers) {
     const t = n.life / n.max;
     ctx.globalAlpha = t;
-    ctx.fillStyle = n.plate ? "#1a3d6e" : "#7a2d1a";
+    ctx.fillStyle = n.color || (n.plate ? "#1a3d6e" : "#7a2d1a");
     ctx.fillText(n.text, n.x, n.y);
   }
   for (const p of fx.plates) {

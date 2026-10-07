@@ -1,4 +1,4 @@
-import { applyWeaponSwap, usesAmmo, weaponDef, createRunState, applyPlayerStats } from "./run.js";
+import { applyWeaponSwap, usesAmmo, weaponDef, createRunState, applyPlayerStats, GOLD_PER_KILL, REROLL_PRICE } from "./run.js";
 
 export const UPGRADE_CATALOG = [
   { id: "laser_spd", title: "Быстрый луч", desc: "Скорость снаряда +25%", maxStacks: 4, rarity: "common", syn: "laser", effect: { mul: { laserSpeedMult: 1.25 } } },
@@ -16,7 +16,7 @@ export const UPGRADE_CATALOG = [
   { id: "hp_max", title: "Запас сил", desc: "Макс. жизни +1 и сразу +1 HP", maxStacks: 3, rarity: "rare", syn: "any", special: "hp_max" },
   { id: "life_steal", title: "Жажда", desc: "25% шанс восстановить 1 HP при убийстве", rarity: "ink", syn: "any", effect: { set: { lifeSteal: 0.25 } } },
   { id: "ammo_cap", title: "Большой магазин", desc: "Ёмкость патронов +50% и немного патронов сразу", maxStacks: 2, rarity: "common", syn: "ammo", special: "ammo_cap" },
-  { id: "ammo_drop", title: "Запасливость", desc: "Патроны выпадают чаще и пачками больше", maxStacks: 2, rarity: "common", syn: "ammo", effect: { add: { ammoDropBonus: 0.2 } } },
+  { id: "ammo_drop", title: "Запасливость", desc: "Патроны выпадают чаще и пачками больше", maxStacks: 2, rarity: "common", syn: "ammo", effect: { add: { ammoDropBonus: 0.1 } } },
   { id: "vision_nerf", title: "Тень", desc: "Дальность зрения врагов −18%", maxStacks: 2, rarity: "common", syn: "any", effect: { mul: { visionMult: 0.82 } } },
   { id: "shield_once", title: "Щит уровня", desc: "1 блок урона на каждом листе", rarity: "rare", syn: "any", special: "shield" },
   { id: "double_tap", title: "Двойной выстрел", desc: "Шанс сразу выпустить второй снаряд", maxStacks: 2, rarity: "rare", syn: "any", special: "double_tap" },
@@ -28,15 +28,16 @@ export const UPGRADE_CATALOG = [
   { id: "bounce_hurt", title: "Рикошет больнее", desc: "После отскока луч бьёт на +1", rarity: "rare", syn: "bounce", effect: { set: { bounceDamage: true } } },
   { id: "target_heal", title: "Трофей", desc: "Каждая 3-я мишень восстанавливает 1 HP", rarity: "rare", syn: "any", effect: { set: { targetHealEvery: 3 } } },
   { id: "last_stand", title: "На грани", desc: "При 1 HP ходьба и скорострельность +20%", rarity: "ink", syn: "any", effect: { set: { lastStand: true } } },
-  { id: "warden_break", title: "Щитолом", desc: "Щит стража держится почти вдвое меньше", rarity: "rare", syn: "any", effect: { set: { wardenShieldMult: 0.55 } } },
+  { id: "warden_break", title: "Щитолом стража", desc: "Щит стража держится почти вдвое меньше", rarity: "rare", syn: "any", effect: { set: { wardenShieldMult: 0.55 } } },
   { id: "slow_bots", title: "Топь", desc: "Враги ходят медленнее", maxStacks: 2, rarity: "common", syn: "any", effect: { mul: { enemySpeedMult: 0.84 } } },
   { id: "spawn_wound", title: "Жгучий портал", desc: "Враги выходят уже ранеными (−1 HP)", rarity: "ink", syn: "any", effect: { set: { spawnWound: 1 } } },
   { id: "reload_mark", title: "Сбор зарядки", desc: "Мишень сбрасывает половину перезарядки", rarity: "common", syn: "any", effect: { set: { reloadOnTarget: true } } },
   { id: "level_heal", title: "Передышка", desc: "В начале каждого следующего листа +1 HP", rarity: "rare", syn: "any", effect: { set: { levelHeal: true } } },
   { id: "pierce_plus", title: "Пробивной заряд", desc: "Выстрелы пробивают ещё одну цель. Ствол тот же", maxStacks: 2, rarity: "rare", syn: "any", effect: { add: { pierceBonus: 1 } } },
   { id: "fat_beam", title: "Толстый луч", desc: "Свой снаряд шире, проще попасть", maxStacks: 2, rarity: "common", syn: "any", effect: { mul: { shotRadiusMult: 1.4 } } },
-  { id: "stun_hit", title: "Оглушение", desc: "Попадание держит врага ещё +0.3 с", maxStacks: 3, rarity: "common", syn: "any", effect: { add: { stunBonus: 0.3 } } },
-  { id: "first_shot", title: "Первый выстрел", desc: "Первый выстрел на листе без перезарядки и +1 урон", rarity: "rare", syn: "any", special: "first_shot" },
+  { id: "stun_hit", title: "Вязкие чернила", desc: "Попадание замедляет врага ещё на 0.3 с", maxStacks: 3, rarity: "common", syn: "any", effect: { add: { slowBonus: 0.3 } } },
+  { id: "stun_once", title: "Оглушение", desc: "Попадание оглушает врага на 0.5 с", rarity: "rare", syn: "any", effect: { set: { stunOnHit: 0.5 } } },
+  { id: "first_shot", title: "Первый выстрел", desc: "Первый выстрел на листе без перезарядки", rarity: "rare", syn: "any", special: "first_shot" },
   { id: "enemy_cd", title: "Сбой", desc: "Враги стреляют реже", maxStacks: 2, rarity: "common", syn: "any", effect: { mul: { enemyFireMult: 1.25 } } },
   { id: "dodge_nerf", title: "Слепой шаг", desc: "Враги чаще не успевают шагнуть от луча", maxStacks: 2, rarity: "common", syn: "any", effect: { add: { dodgeFail: 0.2 } } },
   { id: "hunt_calm", title: "Хладнокровие", desc: "В режиме охоты враги не ускоряются и не стреляют чаще", rarity: "ink", syn: "any", effect: { set: { huntCalm: true } } },
@@ -45,9 +46,51 @@ export const UPGRADE_CATALOG = [
   { id: "bounce_seek", title: "Ищейка", desc: "После отскока луч чуть доворачивает к ближайшему врагу", rarity: "ink", syn: "bounce", effect: { set: { bounceSeek: true } } },
   { id: "bounce_split", title: "Чернильный скол", desc: "Шанс второго короткого луча в точке рикошета", rarity: "ink", syn: "bounce", effect: { set: { bounceSplit: true } } },
   { id: "smg_burst", title: "Очередь", desc: "Автомат: 3 луча, расход 2 патрона", rarity: "ink", syn: "smg", effect: { set: { smgBurst: true } } },
-  { id: "ink_pool", title: "Лужа", desc: "Дробь оставляет лужу на 2 с — враги в ней медленнее", rarity: "ink", syn: "shotgun", effect: { set: { inkPool: true } } },
+  { id: "ink_pool", title: "Лужа на попадании", desc: "Попадание с шансом 35% оставляет лужу. Враги в ней медленнее", maxStacks: 2, rarity: "ink", syn: "any", effect: { add: { poolOnHit: 0.35 } } },
+  { id: "pool_kill", title: "Лужа на убийстве", desc: "Убийство оставляет лужу", rarity: "rare", syn: "any", effect: { set: { poolOnKill: true } } },
+  { id: "pool_bounce", title: "Лужа на рикошете", desc: "В точке отскока остаётся лужа", rarity: "ink", syn: "bounce", effect: { set: { poolOnBounce: 1 } } },
+  { id: "pool_hurt", title: "Лужа под ногами", desc: "Когда тебя ранят, под ногами лужа", rarity: "rare", syn: "any", effect: { set: { poolOnHurt: true } } },
+  { id: "pool_wide", title: "Широкая лужа", desc: "Лужи шире на 50%", maxStacks: 2, rarity: "common", syn: "any", needsPool: true, effect: { mul: { poolRadiusMult: 1.5 } } },
+  { id: "pool_long", title: "Долгая лужа", desc: "Лужи живут на 1.5 с дольше", maxStacks: 2, rarity: "common", syn: "any", needsPool: true, effect: { add: { poolLifeBonus: 1.5 } } },
+  { id: "pool_acid", title: "Едкая лужа", desc: "Лужа наносит 1 урон раз в 1.5 с", rarity: "ink", syn: "any", needsPool: true, effect: { set: { poolAcid: true } } },
+  { id: "pool_sticky", title: "Липкая лужа", desc: "Вражеские снаряды в луже вдвое медленнее", rarity: "rare", syn: "any", needsPool: true, effect: { set: { poolSticky: true } } },
   { id: "fog_cut", title: "Прорезь", desc: "Пробивной открывает туман вдоль пути на 1.5 с", rarity: "ink", syn: "pierce", effect: { set: { fogCut: true } } },
   { id: "last_clip", title: "Последний ряд", desc: "При патронах ≤ 25% урон +1", rarity: "rare", syn: "ammo", effect: { set: { lastClip: true } } },
+  { id: "heat_slow", title: "Перегрев медленнее", desc: "Лазер заполняет шкалу перегрева на 30% медленнее", maxStacks: 2, rarity: "common", syn: "laser", only: "wpn_laser", effect: { mul: { heatMult: 0.7 } } },
+  { id: "heat_cool", title: "Быстрое остывание", desc: "Лазер стынет заметно быстрее", maxStacks: 2, rarity: "common", syn: "laser", only: "wpn_laser", effect: { mul: { coolMult: 1.45 } } },
+  { id: "smg_long", title: "Длинная очередь", desc: "Автомат: 5 лучей, расход 2 патрона", rarity: "ink", syn: "smg", effect: { set: { smgLong: true } } },
+  { id: "smg_save", title: "Экономный спуск", desc: "Шанс 25% не потратить патрон автомата", rarity: "rare", syn: "smg", effect: { set: { ammoSave: 0.25 } } },
+  { id: "shot_tight", title: "Кучная дробь", desc: "Дробь разлетается уже", maxStacks: 2, rarity: "common", syn: "shotgun", effect: { mul: { spreadMult: 0.62 } } },
+  { id: "shot_pellet", title: "Лишняя дробина", desc: "В залпе дроби на одну дробину больше", maxStacks: 2, rarity: "rare", syn: "shotgun", effect: { add: { pelletBonus: 1 } } },
+  { id: "pierce_two", title: "Второе пробитие", desc: "Пробивной проходит ещё одну цель", rarity: "rare", syn: "pierce", effect: { add: { pierceBonus: 1 } } },
+  { id: "pierce_wall", title: "Пробитие стены", desc: "Пробивной проходит одну тонкую стену", rarity: "ink", syn: "pierce", effect: { set: { wallPierce: 1 } } },
+  { id: "finisher", title: "Добивание", desc: "По раненому врагу +1 урон", rarity: "rare", syn: "any", effect: { set: { finisher: true } } },
+  { id: "ambush", title: "Спина", desc: "Удар в спину наносит +1 урон", rarity: "rare", syn: "any", effect: { set: { ambush: true } } },
+  { id: "first_power", title: "Первый удар", desc: "Первый выстрел на листе бьёт на +1", rarity: "rare", syn: "any", effect: { set: { firstShotDamage: true } } },
+  { id: "chain", title: "Цепь", desc: "Убийство перекидывает луч на соседа", rarity: "ink", syn: "any", effect: { set: { chainKill: true } } },
+  { id: "plate_break", title: "Разрыв брони", desc: "Первое попадание срывает пластину и бьёт", rarity: "rare", syn: "any", effect: { set: { plateBreak: true } } },
+  { id: "target_shield", title: "Щит после мишени", desc: "Подобранная мишень даёт один блок урона", rarity: "rare", syn: "any", effect: { set: { targetShield: true } } },
+  { id: "dodge", title: "Уклон", desc: "Шанс 20% не получить урон", rarity: "ink", syn: "any", effect: { set: { dodgeChance: 0.2 } } },
+  { id: "thick_skin", title: "Толстая кожа", desc: "Урон по просроченному сроку приходит реже", rarity: "rare", syn: "any", effect: { set: { overtimeSlow: 1.6 } } },
+  { id: "second_wind", title: "Отдышка", desc: "3 с без урона — +1 HP, раз за лист", rarity: "rare", syn: "any", effect: { set: { secondWind: true } } },
+  { id: "dash", title: "Рывок", desc: "Shift — короткий бросок, потом пауза", rarity: "rare", syn: "any", effect: { set: { dash: true } } },
+  { id: "quiet", title: "Тихий шаг", desc: "Крик врага собирает соседей с меньшего расстояния", rarity: "common", syn: "any", effect: { set: { quietStep: true } } },
+  { id: "wall_slide", title: "Скольжение", desc: "Вдоль стены шаг быстрее", rarity: "common", syn: "any", effect: { set: { wallSlide: 1.18 } } },
+  { id: "map_peek", title: "Карта листа", desc: "В начале листа стены видны 3 с", rarity: "ink", syn: "any", effect: { set: { mapPeek: true } } },
+  { id: "compass", title: "Компас", desc: "Стрелка к ближайшей мишени", rarity: "common", syn: "any", effect: { set: { compass: true } } },
+  { id: "enemy_mark", title: "Метка врага", desc: "Увиденный враг подсвечен ещё 2 с", rarity: "common", syn: "any", effect: { set: { enemyMark: true } } },
+  { id: "shot_echo", title: "Эхо выстрелов", desc: "Чужие выстрелы слышно сквозь стены дальше", maxStacks: 2, rarity: "common", syn: "any", effect: { add: { shotHearBonus: 5 } } },
+  { id: "piggy", title: "Копилка", desc: "За врага ещё +2 золота", maxStacks: 2, rarity: "common", syn: "any", effect: { add: { goldBonus: 2 } } },
+  { id: "discount", title: "Скидка", desc: "Обновление карточек дешевле на 20%", maxStacks: 2, rarity: "rare", syn: "any", effect: { add: { rerollDiscount: 0.2 } } },
+  { id: "extra_mark", title: "Лишняя метка", desc: "Мишень иногда кладёт в банк ещё одну метку", rarity: "rare", syn: "any", effect: { set: { bankBonus: 0.35 } } },
+  { id: "champ_gold", title: "Трофей чемпиона", desc: "Убийство чемпиона даёт ещё 100 золота", rarity: "ink", syn: "any", effect: { set: { champBounty: true } } },
+  { id: "aim_jam", title: "Помехи", desc: "Враги целятся на 0.2 с дольше", maxStacks: 2, rarity: "common", syn: "any", effect: { add: { aimJam: 0.2 } } },
+  { id: "portal_slow", title: "Сбитый порт", desc: "Порталы заряжаются дольше", rarity: "rare", syn: "any", effect: { set: { portalSlow: 1.45 } } },
+  { id: "panic", title: "Паника", desc: "Убийство замирает соседей на 0.3 с", rarity: "rare", syn: "any", effect: { set: { panic: true } } },
+  { id: "champ_break", title: "Щитолом чемпиона", desc: "Щит чемпиона держится почти вдвое меньше", rarity: "rare", syn: "any", effect: { set: { champShieldMult: 0.55 } } },
+  { id: "kill_rush", title: "После убийства", desc: "Убийство на секунду ускоряет шаг", rarity: "common", syn: "any", effect: { set: { killRush: true } } },
+  { id: "stash", title: "Заначка", desc: "В начале листа у автомата и дроби ещё +2 патрона", maxStacks: 2, rarity: "common", syn: "ammo", effect: { add: { sheetAmmoBonus: 2 } } },
+  { id: "hush", title: "Глухой крик", desc: "Крик врага не поднимает соседей", rarity: "ink", syn: "any", effect: { set: { shoutMute: true } } },
 ];
 
 const RARITY_WEIGHT = { common: 10, rare: 4, ink: 2 };
@@ -70,12 +113,12 @@ export function addAmmo(run, amount) {
 
 export function ammoDropChance(run) {
   if (!usesAmmo(run)) return 0;
-  return Math.min(0.75, 0.35 + run.mods.ammoDropBonus);
+  return Math.min(0.4, 0.2 + run.mods.ammoDropBonus);
 }
 
 export function ammoDropAmount(run) {
-  const base = run.weaponId === "wpn_shotgun" ? 4 : 6;
-  return base + (run.mods.ammoDropBonus > 0 ? 2 : 0);
+  const base = run.weaponId === "wpn_shotgun" ? 3 : 4;
+  return base + (run.mods.ammoDropBonus > 0 ? 1 : 0);
 }
 
 function stackCount(run, id) {
@@ -111,10 +154,18 @@ export function isAvailable(run, upgrade) {
   if (upgrade.syn === "shotgun" && run.weaponId !== "wpn_shotgun") return false;
   if (upgrade.syn === "pierce" && run.weaponId !== "wpn_pierce") return false;
   if (upgrade.syn === "laser" && run.weaponId !== "wpn_laser" && run.weaponId !== "wpn_pierce") return false;
+  if (upgrade.only && run.weaponId !== upgrade.only) return false;
+  if (upgrade.needsPool && !hasPoolSource(run)) return false;
   return true;
 }
 
-const LIFE_IDS = new Set(["hp_max", "level_heal", "target_heal", "life_steal", "lucky"]);
+const POOL_SOURCES = ["ink_pool", "pool_kill", "pool_bounce", "pool_hurt"];
+
+function hasPoolSource(run) {
+  return POOL_SOURCES.some((id) => stackCount(run, id) > 0);
+}
+
+const LIFE_IDS = new Set(["hp_max", "level_heal", "target_heal", "life_steal", "lucky", "second_wind"]);
 
 function weightOf(u, lowLife = false) {
   const base = RARITY_WEIGHT[u.rarity] || 6;
@@ -233,7 +284,7 @@ function applySpecial(run, player, special, stackIndex) {
       break;
     case "lucky":
       m.lifeDropChance = 0.35;
-      m.ammoDropBonus += 0.15;
+      m.ammoDropBonus += 0.05;
       break;
     case "crit":
       m.critChance = stackIndex === 0 ? 0.2 : 0.35;
@@ -247,8 +298,18 @@ function applySpecial(run, player, special, stackIndex) {
   }
 }
 
+function barrelName(run) {
+  const id = run?.weaponId;
+  if (id === "wpn_smg") return "Автомат";
+  if (id === "wpn_shotgun") return "Дробь";
+  if (id === "wpn_pierce") return "Пробивной";
+  return "Лазер";
+}
+
 export function offerDesc(upgrade, run) {
   if (!upgrade) return "";
+  const gun = barrelName(run);
+  const gunLow = gun.toLowerCase();
   if (upgrade.id === "lucky") {
     return usesAmmo(run) ? "Жизни и патроны дропаются чаще" : "Жизни дропаются чаще";
   }
@@ -261,10 +322,50 @@ export function offerDesc(upgrade, run) {
     const chance = stackCount(run, upgrade.id) === 0 ? 20 : 35;
     return `Шанс ${chance}% нанести +1 урон`;
   }
+  if (upgrade.id === "ink_pool") {
+    const next = stackCount(run, upgrade.id) + 1;
+    const chance = Math.round(Math.min(0.7, 0.35 * next) * 100);
+    return `Попадание ${gunLow} с шансом ${chance}% оставляет лужу. Враги в ней медленнее`;
+  }
   if (upgrade.id === "wpn_laser") {
     const starter = run?.starterWeaponId || run?.weaponId;
     if (starter === "wpn_laser") return "Вернуться к своему лазеру без лимита патронов";
     return "Сменить ствол на лазер без лимита патронов";
+  }
+  if (upgrade.id === "first_shot") return `Первый ${gunLow} на листе выходит без перезарядки`;
+  if (upgrade.id === "first_power") return `Первый ${gunLow} на листе бьёт на +1`;
+  if (upgrade.id === "finisher") return `Если враг уже ранен, ${gunLow} бьёт на +1`;
+  if (upgrade.id === "ambush") return `${gun} в спину бьёт на +1`;
+  if (upgrade.id === "chain") return `Убийство ${gunLow} перекидывает луч на соседа`;
+  if (upgrade.id === "plate_break") return `Первое попадание ${gunLow} срывает пластину и наносит урон`;
+  if (upgrade.id === "piggy") {
+    const next = stackCount(run, upgrade.id) + 1;
+    return `За врага ${GOLD_PER_KILL + 2 * next} золота, сразу в кошелёк`;
+  }
+  if (upgrade.id === "discount") {
+    const next = Math.min(0.6, (run?.mods?.rerollDiscount || 0) + 0.2);
+    const price = Math.round(REROLL_PRICE * (1 - next));
+    return `Обновление карточек за ${price}`;
+  }
+  if (upgrade.id === "aim_jam") {
+    const next = stackCount(run, upgrade.id) + 1;
+    return `Враги целятся на ${(0.2 * next).toFixed(1)} с дольше`;
+  }
+  if (upgrade.id === "shot_echo") {
+    const next = stackCount(run, upgrade.id) + 1;
+    return `Чужие выстрелы слышно сквозь стены на ${5 + 5 * next} клеток`;
+  }
+  if (upgrade.id === "shot_pellet") {
+    const next = stackCount(run, upgrade.id) + 1;
+    return `В залпе дроби ${3 + next} дробины`;
+  }
+  if (upgrade.id === "smg_long") return "Автомат выпускает 5 лучей и тратит 2 патрона";
+  if (upgrade.id === "smg_save") return "Выстрел автомата с шансом 25% не тратит патрон";
+  if (upgrade.id === "stash") {
+    const next = stackCount(run, upgrade.id) + 1;
+    return usesAmmo(run)
+      ? `В начале листа ещё +${2 * next} патрона к ${gunLow}`
+      : "В начале листа у автомата и дроби ещё патроны";
   }
   return upgrade.desc || "";
 }
@@ -326,10 +427,18 @@ function forceApplyUpgrade(run, upgrade, player = null) {
   if (run.stacks[upgrade.id] >= (upgrade.maxStacks || 1)) run.taken.add(upgrade.id);
   applyEffectBlob(run.mods, upgrade.effect, stackIndex);
   if (upgrade.special) applySpecial(run, player, upgrade.special, stackIndex);
+  if (upgrade.id === "first_shot" || upgrade.id === "first_power") run.firstShotPending = true;
 }
 
 export function takenEntries(run) {
   return Object.entries(run.stacks || {}).filter(([, n]) => n > 0);
+}
+
+let afterRebuild = null;
+
+/** main вызывает после пересборки стеков, чтобы бонусы тетради легли на свежие mods. */
+export function setAfterRebuild(fn) {
+  afterRebuild = typeof fn === "function" ? fn : null;
 }
 
 export function rebuildFromStacks(run, player = null) {
@@ -366,7 +475,8 @@ export function rebuildFromStacks(run, player = null) {
   if (usesAmmo(run) && Number.isFinite(ammo) && Number.isFinite(run.ammoMax)) {
     run.ammo = Math.min(run.ammoMax, ammo);
   }
-  run.firstShotPending = !!(keep.firstShotPending && run.mods.firstShot);
+  run.firstShotPending = !!(keep.firstShotPending && (run.mods.firstShot || run.mods.firstShotDamage));
+  if (afterRebuild) afterRebuild(run);
   if (player) applyPlayerStats(player, run);
 }
 

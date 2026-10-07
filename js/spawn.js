@@ -1,5 +1,5 @@
 import { CELL, worldToCell } from "./maze.js";
-import { spawnEnemy, enemyHp, pickSpawnKind, isStrongKind, escortCount } from "./enemy.js";
+import { spawnEnemy, enemyHp, pickSpawnKind, isStrongKind, escortCount, wakeToPlayer } from "./enemy.js";
 
 export const MAX_ALIVE = 10;
 const A1_ALIVE = 16;
@@ -54,12 +54,19 @@ function aliveCount(enemies) {
   return enemies.filter((e) => e.alive).length;
 }
 
-function isA1(sheet) {
-  return sheet?.tag === "a1";
+/** 0 на обычном листе, 1 на А1. */
+function bigness(sheet) {
+  const k = (Number(sheet?.cols) || 33) / 33;
+  return Math.max(0, Math.min(1, (k - 1) / 3));
+}
+
+/** С удвоенной стороны враги селятся по комнатам заранее и выходят рядом с игроком. */
+function isBig(sheet) {
+  return bigness(sheet) >= 1 / 3;
 }
 
 function aliveLimit(world) {
-  return isA1(world?.sheet) ? A1_ALIVE : MAX_ALIVE;
+  return Math.round(MAX_ALIVE + (A1_ALIVE - MAX_ALIVE) * bigness(world?.sheet));
 }
 
 function hasKind(enemies, pending, kind) {
@@ -138,7 +145,7 @@ function preferNearDens(pool, player, rng) {
 export function pickSpawnDen(sheet, pending, enemies, rng = Math.random, player = null) {
   let pool = densForPick(sheet, pending, enemies);
   if (pool.length === 0) return null;
-  if (isA1(sheet)) pool = preferNearDens(pool, player, rng);
+  if (bigness(sheet) > 0.15) pool = preferNearDens(pool, player, rng);
   return pool[Math.floor(rng() * pool.length)];
 }
 
@@ -186,7 +193,7 @@ export function queuePack(spawner, world, kind = "grunt") {
   return true;
 }
 
-function seedA1(spawner, world) {
+function seedBig(spawner, world) {
   const start = world.sheet?.start;
   const dens = (world.sheet?.spawnDens || []).slice();
   if (!start || dens.length === 0) return;
@@ -211,9 +218,9 @@ function seedA1(spawner, world) {
   });
 }
 
-function tickA1Ambush(spawner, world) {
+function tickAmbush(spawner, world) {
   const player = world.player;
-  if (!isA1(world.sheet) || !player) return;
+  if (!isBig(world.sheet) || !player) return;
   const here = worldToCell(player.x, player.y);
   const used = aliveCount(world.enemies) + spawner.pending.length;
   if (used >= aliveLimit(world)) return;
@@ -236,26 +243,39 @@ function tickA1Ambush(spawner, world) {
 
 export function beginSheetSpawns(spawner, world) {
   resetSpawner(spawner, world.levelNum);
-  if (isA1(world.sheet)) {
-    seedA1(spawner, world);
+  if (isBig(world.sheet)) {
+    seedBig(spawner, world);
     spawner.timer = 6 * heatPace(heatLevel(world));
-    return;
+  } else {
+    queuePack(spawner, world, "grunt");
+    const pace = heatPace(heatLevel(world));
+    if (world.levelNum === 1) {
+      spawner.timer = 14 * pace;
+    } else {
+      if (world.levelNum >= 6) queuePack(spawner, world, pickSpawnKind(world.levelNum));
+      spawner.timer = 9 * pace;
+    }
   }
-  queuePack(spawner, world, "grunt");
-  const pace = heatPace(heatLevel(world));
-  if (world.levelNum === 1) {
-    spawner.timer = 14 * pace;
-    return;
+  if (world.sheet?.objective === "survive") releaseOpening(spawner, world);
+}
+
+/** Стартовая группа «выжить» уже стоит на полу и в охоте, без портала и паузы выхода. */
+function releaseOpening(spawner, world) {
+  const before = world.enemies.length;
+  for (const job of spawner.pending) {
+    job.charge = 1;
+    job.silent = true;
   }
-  if (world.levelNum >= 6) queuePack(spawner, world, pickSpawnKind(world.levelNum));
-  spawner.timer = 9 * pace;
+  updatePortalCharges(spawner, world, 0);
+  for (let i = before; i < world.enemies.length; i++) wakeToPlayer(world.enemies[i], world.player);
 }
 
 export function updatePortalCharges(spawner, world, dt) {
   const { sheet, enemies, run, levelNum } = world;
   const still = [];
   for (const job of spawner.pending) {
-    const dur = job.kind === "champion" ? PORTAL_CHARGE_TIME * 1.45 : PORTAL_CHARGE_TIME;
+    const slow = Math.max(1, Number(run?.mods?.portalSlow) || 1);
+    const dur = (job.kind === "champion" ? PORTAL_CHARGE_TIME * 1.45 : PORTAL_CHARGE_TIME) * slow;
     job.charge += dt / dur;
     if (job.charge < 1) {
       const t = Math.max(0, job.charge);
@@ -285,10 +305,10 @@ export function updatePortalCharges(spawner, world, dt) {
     spawned.x += (packmates % 2 === 0 ? -1 : 1) * 6;
     spawned.y += (packmates % 3 - 1) * 4;
     enemies.push(spawned);
+    if (!job.silent) world.onSpawn?.(spawned);
     job.den.portal.scale = PORTAL_IDLE_SCALE;
     job.den.portal.charge = 0;
     if (job.event) world.onChampionSpawn?.(spawned);
-    world.onSpawn?.(spawned);
   }
   spawner.pending = still;
 
@@ -305,7 +325,7 @@ export function tickSpawner(spawner, dt, world) {
     spawner.championEvent = Math.max(0, spawner.championEvent - dt);
   }
   updatePortalCharges(spawner, world, dt);
-  tickA1Ambush(spawner, world);
+  tickAmbush(spawner, world);
   const hits = world.hitCount();
   const phase = wavePhase(hits);
   const levelNum = world.levelNum;
@@ -341,13 +361,13 @@ export function tickSpawner(spawner, dt, world) {
 
   const used = aliveCount(world.enemies) + spawner.pending.length;
   let cap = (phase === "scout" ? 4 : phase === "pressure" ? 7 : MAX_ALIVE) + 2 * heat;
-  if (isA1(world.sheet)) cap = Math.max(cap, phase === "scout" ? 8 : 14);
+  if (isBig(world.sheet)) cap = Math.max(cap, phase === "scout" ? 8 : 14);
   if (used >= cap) {
     spawner.timer = 2.2;
     return phase;
   }
 
-  const pace = heatPace(heat) * (isA1(world.sheet) ? 0.62 : 1);
+  const pace = heatPace(heat) * (1 - 0.38 * bigness(world.sheet));
   if (phase === "scout") {
     if (levelNum === 1) queueSpawn(spawner, world, "grunt");
     else queuePack(spawner, world, "grunt");

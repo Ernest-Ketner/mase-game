@@ -1,4 +1,5 @@
 import { hashSeed, mulberry32 } from "./seed.js";
+import { sheetScale } from "./maze.js";
 
 export const OBJECTIVES = [
   { id: "marks", label: "метки", hint: "собери нужное число меток" },
@@ -13,12 +14,16 @@ export function objectiveById(id) {
   return OBJECTIVES.find((item) => item.id === id) || OBJECTIVES[0];
 }
 
-/** Лист 1 всегда «метки». Дальше цель зашита в сид. Босс — с 3-го листа. */
+const PASS_CHANCE = 0.05;
+
+/** Лист 1 всегда «метки». Дальше цель зашита в сид. Босс — с 3-го листа. «Проход» — редкий, только на листе вдвое больше обычного. */
 export function pickSheetObjective(levelNum, seed) {
   const n = Math.max(1, Math.floor(Number(levelNum)) || 1);
   if (n < 2) return objectiveById("marks");
   const rng = mulberry32(hashSeed(seed >>> 0, 44000 + n * 17));
-  const pool = OBJECTIVES.filter((item) => n >= 3 || item.id !== "boss");
+  const passRoll = rng();
+  if (sheetScale(n) >= 2 && passRoll < PASS_CHANCE) return objectiveById("pass");
+  const pool = OBJECTIVES.filter((item) => item.id !== "pass" && (n >= 3 || item.id !== "boss"));
   return pool[Math.floor(rng() * pool.length)];
 }
 

@@ -2,17 +2,19 @@ import { NOTEBOOK_GOAL } from "./run.js";
 
 const TIMED_CHANCE = 0.3;
 const TIME_BEFORE = 90;
-const TIME_AT_21 = 80;
+const TIME_AFTER_NOTEBOOK = 60;
 const TIME_STEP = 4;
-const TIME_FLOOR = 35;
+const TIME_FLOOR = 15;
+export const TARGET_TIME_BONUS = 3;
 
-export function sheetTimeLimit(levelNum, rng = Math.random) {
+/** До конца тетради срок растёт вместе с листом (`sizeScale` — во сколько раз сторона больше обычной). */
+export function sheetTimeLimit(levelNum, rng = Math.random, sizeScale = 1) {
   const n = Math.max(1, Math.floor(Number(levelNum)) || 1);
   if (n <= 1) return 0;
   if (n > NOTEBOOK_GOAL) {
-    return Math.max(TIME_FLOOR, TIME_AT_21 - TIME_STEP * (n - 21));
+    return Math.max(TIME_FLOOR, TIME_AFTER_NOTEBOOK - TIME_STEP * (n - NOTEBOOK_GOAL - 1));
   }
-  return rng() < TIMED_CHANCE ? TIME_BEFORE : 0;
+  return rng() < TIMED_CHANCE ? TIME_BEFORE * Math.max(1, sizeScale) : 0;
 }
 
 export function overtimeInterval(rng = Math.random) {

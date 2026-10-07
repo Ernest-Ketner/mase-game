@@ -10,7 +10,57 @@ export let BAY_COLS = 10;
 export let BAY_ROWS = 13;
 /** А1: стороны ×4, площадь листа ×16. Клетка по-прежнему 5 мм. */
 export const A1_SCALE = 4;
+/** К этому листу поле дорастает до А1 и дальше не меняется. */
+export const A1_SHEET = 20;
 export const TARGET_MIN_SEP = 5;
+const BASE_COLS = 33;
+const BASE_ROWS = 41;
+
+/** Во сколько раз сторона листа больше обычной: 1 на первом, 4 (А1) с 20-го. */
+export function sheetScale(levelNum) {
+  const n = Math.max(1, Math.floor(Number(levelNum)) || 1);
+  if (n >= A1_SHEET) return A1_SCALE;
+  return 1 + ((A1_SCALE - 1) * (n - 1)) / (A1_SHEET - 1);
+}
+
+/** Размер сетки листа; стороны подогнаны под шаг bay (3 клетки), чтобы край был стеной толщиной 1–2. */
+export function sheetDims(levelNum) {
+  const k = sheetScale(levelNum);
+  return {
+    cols: 3 * Math.round((BASE_COLS * k - 3) / 3) + 3,
+    rows: 3 * Math.round((BASE_ROWS * k - 5) / 3) + 5,
+  };
+}
+
+/** Доля случайных петель поверх обязательных (у каждого bay коридора ≥ 2 связей). */
+const EXTRA_LOOPS = 0.05;
+/** Доля комнат с одной дверью; остальные — с двумя. */
+const ROOM_ONE_DOOR = 0.3;
+
+let FOLD_BC = 4;
+let FOLD_COL = 3 * (FOLD_BC + 1);
+let FOLD_GATES = [2, 9];
+
+function areaScale() {
+  return (COLS * ROWS) / (BASE_COLS * BASE_ROWS);
+}
+
+function sideScale() {
+  return COLS / BASE_COLS;
+}
+
+/** На А1 (площадь ×16) комнат примерно вчетверо больше, чем на обычном листе. */
+function roomMult() {
+  return 1 + 0.2 * (areaScale() - 1);
+}
+
+/** Площадь «арены» по центру: 16 клеток на обычном листе, растёт медленнее стороны. */
+function arenaRect() {
+  const s = 2 * Math.round((16 * Math.sqrt(sideScale())) / 2);
+  const c0 = Math.floor((COLS - s) / 2);
+  const r0 = Math.floor((ROWS - s) / 2);
+  return [c0, r0, c0 + s - 1, r0 + s - 1];
+}
 export const FIELD_MM = { width: 165, height: 205, cell: 5 };
 
 export function isFloor(grid, c, r) {
@@ -141,10 +191,13 @@ export function setSheetMetrics(cols, rows) {
   ROWS = rows;
   BAY_COLS = baySpan(cols);
   BAY_ROWS = baySpan(rows);
+  FOLD_BC = Math.floor(BAY_COLS * 0.45);
+  FOLD_COL = 3 * (FOLD_BC + 1);
+  FOLD_GATES = [Math.floor(BAY_ROWS * 0.2), Math.floor(BAY_ROWS * 0.72)];
 }
 
 export function resetSheetMetrics() {
-  setSheetMetrics(33, 41);
+  setSheetMetrics(BASE_COLS, BASE_ROWS);
 }
 
 function makeGrid() {
@@ -188,39 +241,117 @@ function openLink(grid, a, b) {
   return openLink(grid, b, a);
 }
 
-function carveBays(grid, rng) {
+/** Комнаты до разметки коридоров: bay → индекс комнаты и сколько дверей ей можно. */
+function makeRoomPlan(rooms, rng) {
+  const roomOf = Array.from({ length: BAY_ROWS }, () => Array(BAY_COLS).fill(-1));
+  rooms.forEach((rect, i) => {
+    for (let br = rect.br0; br < rect.br0 + rect.bh; br++) {
+      for (let bc = rect.bc0; bc < rect.bc0 + rect.bw; bc++) roomOf[br][bc] = i;
+    }
+  });
+  return {
+    rooms,
+    roomOf,
+    doors: rooms.map(() => 0),
+    maxDoors: rooms.map(() => (rng() < ROOM_ONE_DOOR ? 1 : 2)),
+  };
+}
+
+function roomAt(plan, b) {
+  return plan ? plan.roomOf[b.br]?.[b.bc] ?? -1 : -1;
+}
+
+/** Связь a–b пересекает стену комнаты: это дверь, у неё бюджет. */
+function doorRoom(plan, a, b) {
+  const ra = roomAt(plan, a);
+  const rb = roomAt(plan, b);
+  if (ra === rb) return -1;
+  return ra >= 0 ? ra : rb;
+}
+
+function linkAllowed(plan, a, b) {
+  const room = doorRoom(plan, a, b);
+  return room < 0 || plan.doors[room] < plan.maxDoors[room];
+}
+
+function openPlannedLink(grid, plan, a, b) {
+  const room = doorRoom(plan, a, b);
+  if (!openLink(grid, a, b)) return false;
+  if (room >= 0) plan.doors[room] += 1;
+  return true;
+}
+
+function roomBays(rect) {
+  const out = [];
+  for (let br = rect.br0; br < rect.br0 + rect.bh; br++) {
+    for (let bc = rect.bc0; bc < rect.bc0 + rect.bw; bc++) out.push({ bc, br });
+  }
+  return out;
+}
+
+/**
+ * Остовное дерево по bay; комната — один узел, в неё и из неё не больше `maxDoors` дверей.
+ * Если остались недоступные куски, бюджет двери нарушается ровно там, где иначе не пройти.
+ */
+function carveBays(grid, rng, plan = null) {
   for (let br = 0; br < BAY_ROWS; br++) {
     for (let bc = 0; bc < BAY_COLS; bc++) openBay(grid, bc, br);
   }
 
   const visited = Array.from({ length: BAY_ROWS }, () => Array(BAY_COLS).fill(false));
-  const stack = [{ bc: 0, br: 0 }];
-  visited[0][0] = true;
-  const dirs = [
-    { dbc: -1, dbr: 0 },
-    { dbc: 1, dbr: 0 },
-    { dbc: 0, dbr: -1 },
-    { dbc: 0, dbr: 1 },
-  ];
+  const markVisited = (b) => {
+    const room = roomAt(plan, b);
+    if (room < 0) {
+      visited[b.br][b.bc] = true;
+      return;
+    }
+    for (const rb of roomBays(plan.rooms[room])) visited[rb.br][rb.bc] = true;
+  };
+  const frontier = (b) => {
+    const room = roomAt(plan, b);
+    const from = room < 0 ? [b] : roomBays(plan.rooms[room]);
+    const out = [];
+    for (const f of from) {
+      for (const n of bayNeighborList(f.bc, f.br)) {
+        if (!visited[n.br][n.bc]) out.push({ from: f, to: n });
+      }
+    }
+    return out;
+  };
 
-  while (stack.length > 0) {
-    const cur = stack[stack.length - 1];
-    const neigh = [];
-    for (const d of dirs) {
-      const nbc = cur.bc + d.dbc;
-      const nbr = cur.br + d.dbr;
-      if (nbc < 0 || nbr < 0 || nbc >= BAY_COLS || nbr >= BAY_ROWS) continue;
-      if (visited[nbr][nbc]) continue;
-      neigh.push({ bc: nbc, br: nbr });
+  const grow = (start, strict) => {
+    const stack = [start];
+    while (stack.length > 0) {
+      const cur = stack[stack.length - 1];
+      const edges = frontier(cur).filter((e) => !strict || linkAllowed(plan, e.from, e.to));
+      if (edges.length === 0) {
+        stack.pop();
+        continue;
+      }
+      const e = edges[Math.floor(rng() * edges.length)];
+      openPlannedLink(grid, plan, e.from, e.to);
+      markVisited(e.to);
+      stack.push(e.to);
     }
-    if (neigh.length === 0) {
-      stack.pop();
-      continue;
+  };
+
+  const origin = { bc: 0, br: 0 };
+  markVisited(origin);
+  grow(origin, !!plan);
+  if (!plan) return;
+  for (let guard = 0; guard < BAY_COLS * BAY_ROWS; guard++) {
+    let bridge = null;
+    for (let br = 0; br < BAY_ROWS && !bridge; br++) {
+      for (let bc = 0; bc < BAY_COLS && !bridge; bc++) {
+        if (!visited[br][bc]) continue;
+        const edges = frontier({ bc, br });
+        bridge = edges.find((e) => linkAllowed(plan, e.from, e.to)) || edges[0] || null;
+      }
     }
-    const next = neigh[Math.floor(rng() * neigh.length)];
-    openLink(grid, cur, next);
-    visited[next.br][next.bc] = true;
-    stack.push(next);
+    if (!bridge) return;
+    openPlannedLink(grid, plan, bridge.from, bridge.to);
+    markVisited(bridge.to);
+    grow(bridge.to, true);
   }
 }
 
@@ -262,21 +393,23 @@ function bayDegree(grid, bc, br) {
 }
 
 /** Добавляет петли в bay-граф, чтобы у каждого bay степень ≥ 2. */
-function addBayLoops(grid, rng, extraFrac = 0.12) {
+function addBayLoops(grid, rng, extraFrac = 0.12, plan = null) {
   for (let pass = 0; pass < 6; pass++) {
     let fixed = 0;
     for (let br = 0; br < BAY_ROWS; br++) {
       for (let bc = 0; bc < BAY_COLS; bc++) {
+        if (roomAt(plan, { bc, br }) >= 0) continue;
         let guard = 0;
         while (bayDegree(grid, bc, br) < 2 && guard < 8) {
           guard += 1;
-          const candidates = bayNeighborList(bc, br).filter(
-            (n) => !bayLinked(grid, { bc, br }, n),
-          );
+          const closed = bayNeighborList(bc, br).filter((n) => !bayLinked(grid, { bc, br }, n));
+          const free = closed.filter((n) => linkAllowed(plan, { bc, br }, n));
+          const candidates = free.length > 0 ? free : closed;
           if (candidates.length === 0) break;
           const pick = candidates[Math.floor(rng() * candidates.length)];
           const before = bayDegree(grid, bc, br);
-          openLink(grid, { bc, br }, pick);
+          if (plan) openPlannedLink(grid, plan, { bc, br }, pick);
+          else openLink(grid, { bc, br }, pick);
           if (bayDegree(grid, bc, br) <= before) break;
           fixed += 1;
         }
@@ -284,15 +417,16 @@ function addBayLoops(grid, rng, extraFrac = 0.12) {
     }
     if (fixed === 0) break;
   }
-  // Дополнительные петли для разнообразия.
   for (let i = 0; i < Math.floor(BAY_COLS * BAY_ROWS * extraFrac); i++) {
     const bc = Math.floor(rng() * BAY_COLS);
     const br = Math.floor(rng() * BAY_ROWS);
     const candidates = bayNeighborList(bc, br).filter(
-      (n) => !bayLinked(grid, { bc, br }, n),
+      (n) => !bayLinked(grid, { bc, br }, n) && (!plan || linkAllowed(plan, { bc, br }, n)),
     );
     if (candidates.length === 0) continue;
-    openLink(grid, { bc, br }, candidates[Math.floor(rng() * candidates.length)]);
+    const pick = candidates[Math.floor(rng() * candidates.length)];
+    if (plan) openPlannedLink(grid, plan, { bc, br }, pick);
+    else openLink(grid, { bc, br }, pick);
   }
 }
 
@@ -392,8 +526,8 @@ export function bfsNextCell(grid, from, goal, neighbors = openNeighbors) {
   const queue = [{ c: from.c, r: from.r }];
   prev.set(key(from.c, from.r), null);
 
-  while (queue.length > 0) {
-    const cur = queue.shift();
+  for (let head = 0; head < queue.length; head++) {
+    const cur = queue[head];
     if (cur.c === goal.c && cur.r === goal.r) break;
     for (const n of neighbors(grid, cur.c, cur.r)) {
       const k = key(n.c, n.r);
@@ -441,20 +575,20 @@ function rectsOverlap(a, b, pad) {
   );
 }
 
-function placeRooms(grid, rng, reserved, wantCount = null) {
+/** Комнаты 5×5 или 8×8 клеток пола (2–3 bay по стороне), между ними хотя бы один bay коридора. */
+function pickRoomRects(rng, reserved, wantCount = null) {
   const rooms = [];
-  const count = wantCount ?? 10 + Math.floor(rng() * 5);
+  const count = wantCount ?? Math.round((10 + Math.floor(rng() * 5)) * roomMult());
   for (let attempt = 0; attempt < count * 8 && rooms.length < count; attempt++) {
-    const bw = 2 + Math.floor(rng() * 3);
-    const bh = 2 + Math.floor(rng() * 3);
+    const bw = 2 + Math.floor(rng() * 2);
+    const bh = 2 + Math.floor(rng() * 2);
     const bc0 = Math.floor(rng() * Math.max(1, BAY_COLS - bw + 1));
     const br0 = Math.floor(rng() * Math.max(1, BAY_ROWS - bh + 1));
     const rect = { bc0, br0, bw, bh };
-    const hitsReserved = reserved.some((r) => rectsOverlap(rect, r, 0));
+    const hitsReserved = reserved.some((r) => rectsOverlap(rect, r, 1));
     if (hitsReserved) continue;
     const hitsRoom = rooms.some((r) => rectsOverlap(rect, r, 1));
     if (hitsRoom) continue;
-    mergeBays(grid, bc0, br0, bw, bh);
     rooms.push(rect);
   }
   return rooms;
@@ -493,6 +627,15 @@ function buildSpawnDens(grid, placedRooms, ...keepOut) {
     });
   }
   return dens;
+}
+
+/** Чистка листа могла замуровать комнату целиком: такое логово убираем, у остальных оставляем только пол. */
+function pruneDens(grid, dens) {
+  for (let i = dens.length - 1; i >= 0; i--) {
+    const den = dens[i];
+    den.cells = den.cells.filter((p) => isFloor(grid, p.c, p.r));
+    if (den.cells.length < 8 || !isFloor(grid, den.portal.c, den.portal.r)) dens.splice(i, 1);
+  }
 }
 
 function pickPortalCell(room) {
@@ -778,8 +921,8 @@ function floodFloor(grid, start) {
   if (!isFloor(grid, start.c, start.r)) return seen;
   queue.push(start);
   seen.add(`${start.c},${start.r}`);
-  while (queue.length > 0) {
-    const cur = queue.shift();
+  for (let head = 0; head < queue.length; head++) {
+    const cur = queue[head];
     for (const n of openNeighbors(grid, cur.c, cur.r)) {
       const key = `${n.c},${n.r}`;
       if (seen.has(key)) continue;
@@ -795,48 +938,49 @@ function bayOfCell(c, r) {
   return { bc: Math.floor((c - 1) / 3), br: Math.floor((r - 1) / 3) };
 }
 
-function reconnectFloors(grid, start) {
-  let guard = 0;
-  while (guard < 40) {
-    guard += 1;
-    const reach = floodFloor(grid, start);
-    const islands = [];
-    for (let r = 1; r < ROWS - 1; r++) {
-      for (let c = 1; c < COLS - 1; c++) {
-        if (!isFloor(grid, c, r)) continue;
-        if (!reach.has(`${c},${r}`)) islands.push({ c, r });
+/** Пришивает отрезанные куски пола к доступной части: пришитый кусок сразу считается доступным, так что цепочки кусков собираются за один обход. Что пришить нельзя — заливается стеной. */
+function reconnectFloors(grid, start, allow = null) {
+  const reach = floodFloor(grid, start);
+  if (reach.size === 0) return;
+  let islands = [];
+  for (let r = 1; r < ROWS - 1; r++) {
+    for (let c = 1; c < COLS - 1; c++) {
+      if (isFloor(grid, c, r) && !reach.has(`${c},${r}`)) islands.push({ c, r });
+    }
+  }
+  const absorb = (cell) => {
+    const stack = [cell];
+    reach.add(`${cell.c},${cell.r}`);
+    while (stack.length > 0) {
+      const cur = stack.pop();
+      for (const n of openNeighbors(grid, cur.c, cur.r)) {
+        const key = `${n.c},${n.r}`;
+        if (reach.has(key)) continue;
+        reach.add(key);
+        stack.push(n);
       }
     }
-    if (islands.length === 0) return;
-
-    let linked = false;
+  };
+  let progressed = true;
+  while (islands.length > 0 && progressed) {
+    progressed = false;
     for (const cell of islands) {
+      if (reach.has(`${cell.c},${cell.r}`)) continue;
       const bay = bayOfCell(cell.c, cell.r);
       if (!bay) continue;
-      const neighBays = [
-        { bc: bay.bc - 1, br: bay.br },
-        { bc: bay.bc + 1, br: bay.br },
-        { bc: bay.bc, br: bay.br - 1 },
-        { bc: bay.bc, br: bay.br + 1 },
-      ];
-      for (const nb of neighBays) {
-        if (nb.bc < 0 || nb.br < 0 || nb.bc >= BAY_COLS || nb.br >= BAY_ROWS) continue;
+      for (const nb of bayNeighborList(bay.bc, bay.br)) {
+        if (allow && !allow(bay, nb)) continue;
         const origin = bayOriginCell(nb.bc, nb.br);
-        if (reach.has(`${origin.c},${origin.r}`)) {
-          if (openLink(grid, bay, nb)) {
-            linked = true;
-            break;
-          }
-        }
+        if (!reach.has(`${origin.c},${origin.r}`) || !openLink(grid, bay, nb)) continue;
+        absorb(cell);
+        progressed = true;
+        break;
       }
-      if (linked) break;
     }
-    if (!linked) {
-      for (const cell of islands) {
-        grid[cell.r][cell.c] = "wall";
-      }
-      return;
-    }
+    islands = islands.filter((cell) => !reach.has(`${cell.c},${cell.r}`));
+  }
+  for (const cell of islands) {
+    if (isFloor(grid, cell.c, cell.r)) grid[cell.r][cell.c] = "wall";
   }
 }
 
@@ -879,20 +1023,20 @@ function growReservedBlot(c, r, rng, ban) {
 
 /** Кляксы ставятся на пустой лист, коридоры потом обходят их. */
 function reserveBlots(grid, rng, tagId) {
-  const huge = COLS > 60;
-  const blobs = (huge ? 7 : 2) + Math.floor(rng() * (huge ? 3 : 2));
+  const k = sideScale();
+  const blobs = Math.round(2 + (5 * (k - 1)) / 3) + Math.floor(rng() * (2 + (k - 1) / 3));
   const ban = new Set();
   banRect(ban, 0, 0, 14, 14);
   banRect(ban, 0, ROWS - 14, 16, ROWS - 1);
   banRect(ban, COLS - 16, ROWS - 14, COLS - 1, ROWS - 1);
-  if (tagId === "arena") banRect(ban, 7, 11, 24, 28);
-  if (tagId === "a1") {
-    for (const [c0, r0, c1, r1] of A1_CAMPS) banRect(ban, c0 - 1, r0 - 1, c1 + 1, r1 + 1);
+  if (tagId === "arena") {
+    const [c0, r0, c1, r1] = arenaRect();
+    banRect(ban, c0 - 1, r0 - 1, c1 + 1, r1 + 1);
   }
   if (tagId === "fold") banRect(ban, FOLD_COL - 1, 0, FOLD_COL + 1, ROWS - 1);
   let made = 0;
   let guard = 0;
-  while (made < blobs && guard < 90) {
+  while (made < blobs && guard < 90 * k) {
     guard += 1;
     const c = 4 + Math.floor(rng() * (COLS - 8));
     const r = 4 + Math.floor(rng() * (ROWS - 8));
@@ -913,13 +1057,13 @@ function reserveBlots(grid, rng, tagId) {
 }
 
 function stampSheetInk(grid, rng, forbidden) {
-  const huge = COLS > 60;
+  const k = sideScale();
   const ban = new Set();
   for (const p of forbidden || []) ban.add(`${p.c},${p.r}`);
   const specks = [];
-  const speckCount = huge ? 48 : 24;
+  const speckCount = Math.round(24 * k);
   let speckGuard = 0;
-  while (specks.length < speckCount && speckGuard < 320) {
+  while (specks.length < speckCount && speckGuard < 320 * k) {
     speckGuard += 1;
     const c = 2 + Math.floor(rng() * (COLS - 4));
     const r = 2 + Math.floor(rng() * (ROWS - 4));
@@ -1113,6 +1257,7 @@ export function exitKindAtPoint(level, x, y) {
     return Math.hypot(x - pos.x, y - pos.y) < CELL * 0.38 ? "calm" : null;
   }
   for (const ex of list) {
+    if (ex.blocked) continue;
     const span = gateSpan(ex.gate);
     if (!span) continue;
     if (x < span.x0 - 4 || x > span.x1 + 4) continue;
@@ -1122,8 +1267,19 @@ export function exitKindAtPoint(level, x, y) {
 }
 
 function exitGatesOf(level) {
-  if (level?.exits?.length) return level.exits.map((ex) => ex.gate).filter(Boolean);
+  if (level?.exits?.length) {
+    return level.exits.filter((ex) => !ex.blocked).map((ex) => ex.gate).filter(Boolean);
+  }
   return level?.exitGate ? [level.exitGate] : [];
+}
+
+/** Шлюз остаётся запертым навсегда: после конца тетради зелёного выхода нет. */
+export function blockExit(level, kind) {
+  for (const ex of level?.exits || []) {
+    if (ex.kind !== kind) continue;
+    ex.blocked = true;
+    if (ex.gate) ex.gate.blocked = true;
+  }
 }
 
 /** Открывает оба нижних шлюза сразу для коллизий и запускает створки. */
@@ -1296,6 +1452,7 @@ function placeTargets(grid, start, exit, extraForbidden, rng) {
   }
 
   const picked = [];
+  const minSep = Math.round(TARGET_MIN_SEP * sideScale());
   const bands = TARGET_COUNT;
   for (let b = 0; b < bands; b++) {
     const lo = maxDist * ((b + 0.35) / bands);
@@ -1310,9 +1467,9 @@ function placeTargets(grid, start, exit, extraForbidden, rng) {
         (m, p) => Math.min(m, Math.abs(p.c - cell.c) + Math.abs(p.r - cell.r)),
         Infinity,
       );
-      if (sep < TARGET_MIN_SEP && picked.length > 0) continue;
+      if (sep < minSep && picked.length > 0) continue;
       const exitSep = Math.abs(cell.c - exit.c) + Math.abs(cell.r - exit.r);
-      const score = cell.d * 2 + sep * 3 + Math.min(exitSep, 12);
+      const score = cell.d * 2 + sep * 3 + Math.min(exitSep, 12 * sideScale());
       if (score > bestScore) {
         bestScore = score;
         best = cell;
@@ -1329,7 +1486,7 @@ function placeTargets(grid, start, exit, extraForbidden, rng) {
       if (picked.length >= TARGET_COUNT) break;
       if (picked.some((p) => p.c === cell.c && p.r === cell.r)) continue;
       const tooClose = picked.some(
-        (p) => Math.abs(p.c - cell.c) + Math.abs(p.r - cell.r) < TARGET_MIN_SEP,
+        (p) => Math.abs(p.c - cell.c) + Math.abs(p.r - cell.r) < minSep,
       );
       if (tooClose) continue;
       picked.push(cell);
@@ -1418,48 +1575,8 @@ function fillRect(grid, c0, r0, c1, r1) {
 
 /** Площадь в центре, край листа остаётся коридорами. */
 function applyArena(grid) {
-  fillRect(grid, 8, 12, 23, 27);
-}
-
-/** Площадь и четыре лагеря, чтобы большой лист не был одним коридором. */
-function applyA1(grid) {
-  fillRect(grid, 56, 72, 76, 96);
-  fillRect(grid, 24, 30, 36, 42);
-  fillRect(grid, 94, 30, 106, 42);
-  fillRect(grid, 24, 116, 36, 128);
-  fillRect(grid, 94, 116, 106, 128);
-}
-
-const A1_CAMPS = [
-  [56, 72, 76, 96],
-  [24, 30, 36, 42],
-  [94, 30, 106, 42],
-  [24, 116, 36, 128],
-  [94, 116, 106, 128],
-];
-
-function campDen(grid, c0, r0, c1, r1) {
-  const c = Math.floor((c0 + c1) / 2);
-  const r = Math.floor((r0 + r1) / 2);
-  if (!isFloor(grid, c, r)) return null;
-  const pos = cellCenter(c, r);
-  return {
-    origin: { c: c0, r: r0 },
-    w: c1 - c0 + 1,
-    h: r1 - r0 + 1,
-    cells: roomCells(grid, { c: c0, r: r0 }, c1 - c0 + 1, r1 - r0 + 1),
-    kind: "camp",
-    portal: { c, r, x: pos.x, y: pos.y },
-  };
-}
-
-function addA1Camps(grid, dens) {
-  for (const [c0, r0, c1, r1] of A1_CAMPS) {
-    const den = campDen(grid, c0, r0, c1, r1);
-    if (!den) continue;
-    if (dens.some((d) => d.portal.c === den.portal.c && d.portal.r === den.portal.r)) continue;
-    dens.push(den);
-  }
+  const [c0, r0, c1, r1] = arenaRect();
+  fillRect(grid, c0, r0, c1, r1);
 }
 
 /** Кольцо по краю листа — поля тетради. */
@@ -1473,10 +1590,6 @@ function applyMargin(grid) {
     openLink(grid, { bc: BAY_COLS - 1, br }, { bc: BAY_COLS - 1, br: br + 1 });
   }
 }
-
-const FOLD_BC = 4;
-const FOLD_COL = 3 * (FOLD_BC + 1);
-const FOLD_GATES = [2, 9];
 
 function foldGateRows() {
   const rows = new Set();
@@ -1510,45 +1623,7 @@ function foldLinkAllowed(a, b) {
 }
 
 function reconnectFold(grid, start) {
-  let guard = 0;
-  while (guard < 48) {
-    guard += 1;
-    const reach = floodFloor(grid, start);
-    const islands = [];
-    for (let r = 1; r < ROWS - 1; r++) {
-      for (let c = 1; c < COLS - 1; c++) {
-        if (!isFloor(grid, c, r)) continue;
-        if (!reach.has(`${c},${r}`)) islands.push({ c, r });
-      }
-    }
-    if (islands.length === 0) return;
-
-    let linked = false;
-    for (const cell of islands) {
-      const bay = bayOfCell(cell.c, cell.r);
-      if (!bay) continue;
-      const neighBays = [
-        { bc: bay.bc - 1, br: bay.br },
-        { bc: bay.bc + 1, br: bay.br },
-        { bc: bay.bc, br: bay.br - 1 },
-        { bc: bay.bc, br: bay.br + 1 },
-      ];
-      for (const nb of neighBays) {
-        if (nb.bc < 0 || nb.br < 0 || nb.bc >= BAY_COLS || nb.br >= BAY_ROWS) continue;
-        if (!foldLinkAllowed(bay, nb)) continue;
-        const origin = bayOriginCell(nb.bc, nb.br);
-        if (!reach.has(`${origin.c},${origin.r}`)) continue;
-        if (!openLink(grid, bay, nb)) continue;
-        linked = true;
-        break;
-      }
-      if (linked) break;
-    }
-    if (!linked) {
-      for (const cell of islands) grid[cell.r][cell.c] = "wall";
-      return;
-    }
-  }
+  reconnectFloors(grid, start, foldLinkAllowed);
 }
 
 function healFold(grid, rng, startCell) {
@@ -1569,7 +1644,6 @@ function applySheetShape(grid, tagId, rng, startCell) {
   if (tagId === "arena") applyArena(grid);
   else if (tagId === "margin") applyMargin(grid);
   else if (tagId === "fold") healFold(grid, rng, startCell);
-  else if (tagId === "a1") applyA1(grid);
   else return;
 
   if (tagId === "fold") return;
@@ -1586,7 +1660,6 @@ export const SHEET_TAGS = [
   { id: "narrow", label: "узкие коридоры", hint: "меньше петель, тесные проходы" },
   { id: "gate", label: "порталы у выхода", hint: "враги чаще выходят у нижнего края" },
   { id: "arena", label: "арена", hint: "открытая площадь в центре, коридоры по краям" },
-  { id: "a1", label: "А1", hint: "большой лист: площадь в центре, четыре лагеря, враги рядом" },
   { id: "fold", label: "сгиб", hint: "лист пополам, переход только в двух местах" },
   { id: "margin", label: "поля", hint: "по краю листа кольцевой проход" },
 ];
@@ -1601,26 +1674,23 @@ export function pickSheetTag(levelNum, rng = Math.random) {
 export function generateLevel(rng = Math.random, options = {}) {
   const tag = options.tag || null;
   const tagId = tag?.id || tag || null;
-  if (tagId === "a1") setSheetMetrics(33 * A1_SCALE, 41 * A1_SCALE);
-  else resetSheetMetrics();
-  const extraFrac = tagId === "narrow" ? 0.02 : 0.12;
-  const roomCount =
-    tagId === "rooms"
-      ? 16 + Math.floor(rng() * 3)
-      : tagId === "a1"
-        ? 40 + Math.floor(rng() * 8)
-        : null;
+  const dims = sheetDims(options.levelNum ?? 1);
+  setSheetMetrics(dims.cols, dims.rows);
+  const extraFrac = tagId === "narrow" ? 0 : EXTRA_LOOPS;
+  const roomCount = tagId === "rooms" ? Math.round((16 + Math.floor(rng() * 3)) * roomMult()) : null;
   const grid = makeGrid();
   reserveBlots(grid, rng, tagId);
-  carveBays(grid, rng);
-  addBayLoops(grid, rng, extraFrac);
   const corners = pickCorners(rng);
   const reserved = [
     { bc0: corners.entryBay.bc, br0: corners.entryBay.br, bw: 2, bh: 2 },
     { bc0: corners.exitLeftBay.bc, br0: corners.exitLeftBay.br, bw: 2, bh: 2 },
     { bc0: corners.exitRightBay.bc, br0: corners.exitRightBay.br, bw: 2, bh: 2 },
   ];
-  const placedRooms = placeRooms(grid, rng, reserved, roomCount);
+  const placedRooms = pickRoomRects(rng, reserved, roomCount);
+  const plan = makeRoomPlan(placedRooms, rng);
+  carveBays(grid, rng, plan);
+  for (const rect of placedRooms) mergeBays(grid, rect.bc0, rect.br0, rect.bw, rect.bh);
+  addBayLoops(grid, rng, extraFrac, plan);
   const entryRoom = roomFromBays(grid, corners.entryBay, rng);
   const exitLeftRoom = roomFromBays(grid, corners.exitLeftBay, rng);
   const exitRightRoom = roomFromBays(grid, corners.exitRightBay, rng);
@@ -1664,14 +1734,12 @@ export function generateLevel(rng = Math.random, options = {}) {
   const exitRight = makeExitDef(grid, exitRightRoom, rightKind, "bottom-right");
   const exits = [exitLeft, exitRight];
   const spawnDens = buildSpawnDens(grid, placedRooms, entryRoom, exitLeftRoom, exitRightRoom);
-  if (tagId === "a1") addA1Camps(grid, spawnDens);
   for (const den of spawnDens) {
     den.portal.scale = 0.4;
     den.portal.charge = 0;
   }
   const clearings = [];
-  if (tagId === "arena") clearings.push([8, 12, 23, 27]);
-  if (tagId === "a1") clearings.push(...A1_CAMPS);
+  if (tagId === "arena") clearings.push(arenaRect());
   const clearingCells = [];
   for (const [c0, r0, c1, r1] of clearings) {
     for (let r = r0; r <= r1; r++) {
@@ -1712,6 +1780,7 @@ export function generateLevel(rng = Math.random, options = {}) {
     tryExpandToBlock(grid, startCell.c, startCell.r);
     reconnectFloors(grid, startCell);
   }
+  pruneDens(grid, spawnDens);
   const gateCells = exits.flatMap((ex) => ex.gate.cells || []);
   const approaches = exits.map((ex) => ex.approach);
   const forbidden = [
